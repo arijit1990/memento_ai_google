@@ -1,8 +1,9 @@
 import "@/App.css";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Toaster } from "sonner";
 
 import { AppShell } from "@/components/layout/AppShell";
+import { AuthProvider, AuthCallback } from "@/lib/auth";
 import Landing from "@/pages/Landing";
 import Chat from "@/pages/Chat";
 import Itinerary from "@/pages/Itinerary";
@@ -13,36 +14,49 @@ import Settings from "@/pages/Settings";
 import Login from "@/pages/auth/Login";
 import Signup from "@/pages/auth/Signup";
 
+// Detect OAuth callback BEFORE rendering routes (synchronous, prevents race)
+const Router = () => {
+  const location = useLocation();
+  if (location.hash?.includes("session_id=")) {
+    return <AuthCallback />;
+  }
+  return (
+    <Routes>
+      <Route element={<AppShell />}>
+        <Route path="/" element={<Landing />} />
+        <Route path="/chat" element={<Chat />} />
+        <Route path="/chat/:sessionId" element={<Chat />} />
+        <Route path="/itinerary/:id" element={<Itinerary />} />
+        <Route path="/trips" element={<Trips />} />
+        <Route path="/explore" element={<Explore />} />
+        <Route path="/saved" element={<Saved />} />
+        <Route path="/settings" element={<Settings />} />
+        <Route path="/auth/login" element={<Login />} />
+        <Route path="/auth/signup" element={<Signup />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
+  );
+};
+
 function App() {
   return (
     <div className="App">
       <BrowserRouter>
-        <Toaster
-          position="bottom-center"
-          toastOptions={{
-            style: {
-              background: "#2D2823",
-              color: "#FAF8F5",
-              border: "1px solid #5C5449",
-              fontFamily: "Outfit, sans-serif",
-            },
-          }}
-        />
-        <Routes>
-          <Route element={<AppShell />}>
-            <Route path="/" element={<Landing />} />
-            <Route path="/chat" element={<Chat />} />
-            <Route path="/chat/:sessionId" element={<Chat />} />
-            <Route path="/itinerary/:id" element={<Itinerary />} />
-            <Route path="/trips" element={<Trips />} />
-            <Route path="/explore" element={<Explore />} />
-            <Route path="/saved" element={<Saved />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/auth/login" element={<Login />} />
-            <Route path="/auth/signup" element={<Signup />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Route>
-        </Routes>
+        <AuthProvider>
+          <Toaster
+            position="bottom-center"
+            toastOptions={{
+              style: {
+                background: "#2D2823",
+                color: "#FAF8F5",
+                border: "1px solid #5C5449",
+                fontFamily: "Outfit, sans-serif",
+              },
+            }}
+          />
+          <Router />
+        </AuthProvider>
       </BrowserRouter>
     </div>
   );

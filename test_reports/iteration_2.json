@@ -1,0 +1,42 @@
+{
+  "summary": "Phase-2 backend + frontend regression for Memento. Created /app/backend/tests/test_memento_api.py (13 pytest cases) covering: health, auth (unauth, bogus session, idempotent logout, seeded session via mongosh), and full trip lifecycle (generate via Gemini 3 Pro, list, get-by-id ownership checks, 404 non-existent, 403 wrong guest_session_id, delete + verify gone). All 13 tests passed in 35s including a real LLM trip generation for Lisbon (Gemini 3 Pro succeeded — fallback not exercised). Frontend sanity verified for /, /chat (split panel + chat-input + welcome), /trips (4 cards render), /auth/login (Google button), /itinerary/trip-paris-001 (Paris mock), /itinerary/<unknown> ('not found'), and NavRail 'IN' sign-in pill visible when unauthenticated.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/trips/generate", "issue": "Observed transient 'Budget has been exceeded! Current cost: 0.039848, Max budget: 0.001' from EMERGENT_LLM_KEY in backend.err.log during early test runs (resolved on subsequent calls — generation succeeded). Worth monitoring: if the key budget is hit in production, BOTH primary (Gemini 3 Pro) and fallback (Claude Sonnet 4.5) fail with the same OpenAI/litellm 400 budget error and the endpoint returns 503. Consider surfacing a clearer user-facing message and/or alerting when budget nears cap."},
+      {"endpoint": "/api/trips/generate", "issue": "Cover image uses source.unsplash.com/featured/... which has been deprecated/unstable for over a year — images may 404 or redirect; consider a different image strategy."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_memento_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Monitor EMERGENT_LLM_KEY budget — saw transient 'Budget exceeded' (0.039 vs 0.001 cap) in logs; if it recurs, request a higher cap. Both providers fail simultaneously on budget exceed since the cap is per-key, defeating the fallback chain.",
+    "(Optional) Replace deprecated source.unsplash.com cover URL with a stable provider or stored asset.",
+    "(Optional minor) Trip cover field is generated on backend but the FE /trips endpoint already maps cover; ensure unsplash redirects don't break <img> on /trips list."
+  ],
+  "critical_code_review_comments": [
+    "server.py call_llm: provider/model fallback chain works, but on 'budget_exceeded' (HTTP 400) BOTH calls hit the same key cap, so fallback adds latency without recovery. Consider short-circuiting on budget_exceeded errors instead of trying the second model.",
+    "server.py extract_json: handles ```json fences, but if LLM returns text before/after the JSON object the find('{')..rfind('}') heuristic could grab too much. Acceptable for now; tested OK.",
+    "server.py /auth/session sets cookie with samesite='none'+secure=True (correct for cross-site preview), but does not set domain — fine for current setup.",
+    "server.py /trips/generate accepts guest_session_id but if user is authed AND guest_session_id is sent, the guest id is silently dropped (expected, but not documented).",
+    "server.py uses @app.on_event('shutdown') which is deprecated in newer FastAPI in favor of lifespan; non-blocking.",
+    "Cover URL points at https://source.unsplash.com/featured/... — deprecated since ~2024; trip list will show broken images intermittently."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_memento_api.py"
+  ],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "100% (sanity checks passed)"},
+  "test_credentials": "Auth tested via mongosh-seeded user_sessions row + Authorization: Bearer header (per /app/auth_testing.md). No real Google account needed.",
+  "seed_data_creation": "Test fixture seeds a transient user + session token directly into MongoDB (test_database.users + test_database.user_sessions) and cleans up on teardown. Trip rows for guest_session_id are also created and deleted via the API in the test flow.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend test suite at /app/backend/tests/test_memento_api.py is reusable. It seeds auth via mongosh and exercises one real LLM call (~25-30s). To re-run: pytest /app/backend/tests/test_memento_api.py -v. If LLM budget is exceeded the test_generate_trip_status will hard-fail with the budget message — that's intentional so you notice. Frontend already passed comprehensively in iteration_1.json + this run; only re-test pages that depend on real backend (/trips list merging, /itinerary/:id real fetch) if backend changes.",
+  "rca of the issue": "No bugs to RCA. Note on the transient budget-exceeded log: the EMERGENT_LLM_KEY had a momentary low cap (0.001) which both Gemini 3 Pro and the Claude fallback exceeded; after retesting, generation succeeded, suggesting the cap was raised or counter reset. If it reappears, it is an account/key-level issue, not a code bug."
+}

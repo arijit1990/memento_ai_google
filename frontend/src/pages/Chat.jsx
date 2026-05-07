@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Plane, ArrowLeft } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -6,132 +6,181 @@ import { toast } from "sonner";
 import { ChatThread } from "@/components/chat/ChatThread";
 import { IntakeWizard } from "@/components/chat/IntakeWizard";
 import { ItineraryPanel } from "@/components/itinerary/ItineraryPanel";
-import { PARIS_TRIP, SAMPLE_CHAT } from "@/lib/mockData";
-import { Button } from "@/components/ui/button";
+import { SAMPLE_CHAT } from "@/lib/mockData";
+import { api, getGuestSessionId } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 
 const Chat = () => {
+  const { user } = useAuth();
   const [mode, setMode] = useState("chat"); // 'chat' | 'wizard'
   const [messages, setMessages] = useState(SAMPLE_CHAT);
   const [showConfirm, setShowConfirm] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [hasItinerary, setHasItinerary] = useState(false);
+  const [trip, setTrip] = useState(null);
   const [confirmSummary, setConfirmSummary] = useState([]);
+  const [intake, setIntake] = useState(null);
+
+  useEffect(() => {
+    // Ensure guest session id exists
+    if (!user) getGuestSessionId();
+  }, [user]);
 
   const handleSend = (text) => {
     const userMsg = { id: `m-${Date.now()}`, role: "user", content: text };
     setMessages((m) => [...m, userMsg]);
 
-    // Mock AI replies
     setTimeout(() => {
       const lower = text.toLowerCase();
       let reply;
+      let triggerConfirm = false;
+      let detected = { ...(intake || { destination: "", dates: "Flexible", group: "2 adults", travelerType: [], tripType: "City Break", budget: "Flexible" }) };
 
-      if (lower.includes("paris") || messages.length <= 1) {
+      // Naive entity sniffing for chat-flow demo
+      const cityMatch = text.match(/\b(Paris|Tokyo|Lisbon|Bali|New York|Kyoto|Marrakech|Reykjavik|Santorini|London|Rome|Barcelona|Amsterdam|Berlin|Bangkok|Seoul|Mexico City|Buenos Aires|Cape Town|Istanbul|Dubai)\b/i);
+      if (cityMatch) detected.destination = cityMatch[0];
+
+      if (!detected.destination) {
         reply = {
           id: `m-${Date.now() + 1}`,
           role: "ai",
           content:
-            "Paris in spring — gorgeous choice. Are you traveling solo, as a couple, or with a group? And roughly when?",
+            "Lovely thought — what city or region are you dreaming of? Tell me a place and a rough timeframe.",
         };
-      } else if (lower.includes("couple") || lower.includes("2") || lower.includes("two")) {
+      } else if (!lower.match(/\b(couple|solo|family|friends|2|two|3|three|4|four)\b/) && !detected.group?.match(/(adult|couple|family|friend)/i)) {
+        reply = {
+          id: `m-${Date.now() + 1}`,
+          role: "ai",
+          content: `${detected.destination} — beautiful pick. Are you traveling solo, as a couple, or with a group? And roughly when?`,
+        };
+      } else if (!lower.match(/\b(food|culture|art|adventure|wellness|party|luxury|explore)\b/) && (!detected.travelerType || detected.travelerType.length === 0)) {
+        if (lower.match(/couple|2|two/)) detected.group = "2 adults";
+        else if (lower.match(/solo/)) detected.group = "Solo";
+        else if (lower.match(/family/)) detected.group = "Family with kids";
+        else if (lower.match(/friend/)) detected.group = "Friends (3-5)";
         reply = {
           id: `m-${Date.now() + 1}`,
           role: "ai",
           content:
-            "A couple's trip — perfect. What's the vibe you're after? Romantic and slow? Culture-heavy? Foodie? Pick anything that resonates.",
+            "Got it. What kind of vibe are you after — culture-heavy, food-forward, adventurous, slow & restful? Pick anything that resonates.",
         };
-      } else if (
-        lower.includes("food") ||
-        lower.includes("culture") ||
-        lower.includes("art")
-      ) {
-        reply = {
-          id: `m-${Date.now() + 1}`,
-          role: "ai",
-          content:
-            "Got it — culture and food it is. One more: what's a comfortable budget for the two of you, all in?",
-        };
-        // Trigger confirm card after a short delay
-        setTimeout(() => {
-          setConfirmSummary([
-            { label: "Destination", value: "Paris, France" },
-            { label: "When", value: "Apr 12 – 16, 2026 · 5 days" },
-            { label: "Group", value: "2 adults" },
-            { label: "Vibe", value: "Culture Seeker · Food Lover" },
-            { label: "Trip type", value: "City Break — romantic pacing" },
-            { label: "Budget", value: "$2,500 – $3,500" },
-          ]);
-          setShowConfirm(true);
-        }, 800);
       } else {
+        // Detect traveler type
+        const types = [];
+        if (lower.match(/food|culinary|eat/)) types.push("Food Lover");
+        if (lower.match(/culture|art|museum|history/)) types.push("Culture Seeker");
+        if (lower.match(/adventure|hike|outdoor/)) types.push("Adventure Seeker");
+        if (lower.match(/wellness|relax|spa|yoga/)) types.push("Wellness Traveller");
+        if (lower.match(/luxury|premium/)) types.push("Luxury Traveller");
+        if (lower.match(/party|nightlife/)) types.push("Party Animal");
+        if (types.length === 0) types.push("Explorer");
+        detected.travelerType = types;
+        triggerConfirm = true;
         reply = {
           id: `m-${Date.now() + 1}`,
           role: "ai",
-          content:
-            "Lovely. Tell me a bit more — when are you thinking, and who's coming along?",
+          content: "Perfect — let me read this back to make sure I have it right.",
         };
       }
+
+      setIntake(detected);
       setMessages((m) => [...m, reply]);
+
+      if (triggerConfirm) {
+        setTimeout(() => {
+          setConfirmSummary([
+            { label: "Destination", value: detected.destination },
+            { label: "When", value: detected.dates || "Flexible" },
+            { label: "Group", value: detected.group || "2 adults" },
+            { label: "Vibe", value: (detected.travelerType || []).join(" · ") || "Explorer" },
+            { label: "Trip type", value: detected.tripType || "City Break" },
+            { label: "Budget", value: detected.budget || "Flexible" },
+          ]);
+          setShowConfirm(true);
+        }, 600);
+      }
     }, 700);
   };
 
   const handleWizardComplete = (data) => {
     setMode("chat");
-    const summary = [
+    setIntake(data);
+    setConfirmSummary([
       { label: "Destination", value: data.destination },
       { label: "When", value: data.dates },
       { label: "Group", value: data.group },
       { label: "Vibe", value: data.travelerType.join(" · ") },
       { label: "Trip type", value: data.tripType },
       { label: "Budget", value: data.budget },
-    ];
-    setConfirmSummary(summary);
+    ]);
     setMessages([
       ...SAMPLE_CHAT,
       {
         id: `m-${Date.now()}`,
         role: "ai",
-        content:
-          "Perfect — I have everything I need. Let me read this back to make sure I've got it right.",
+        content: "Perfect — I have everything I need. Let me read this back to make sure I've got it right.",
       },
     ]);
     setShowConfirm(true);
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     setShowConfirm(false);
     setGenerating(true);
     setMessages((m) => [
       ...m,
-      {
-        id: `m-${Date.now()}`,
-        role: "user",
-        content: "Yes, generate it.",
-      },
+      { id: `m-${Date.now()}`, role: "user", content: "Yes, generate it." },
     ]);
 
-    setTimeout(() => {
-      setGenerating(false);
-      setHasItinerary(true);
+    try {
+      const payload = {
+        intake: {
+          destination: intake?.destination || "Paris, France",
+          dates: intake?.dates || "Flexible",
+          group: intake?.group || "2 adults",
+          travelerType: intake?.travelerType || ["Explorer"],
+          tripType: intake?.tripType || "City Break",
+          budget: intake?.budget || "Flexible",
+        },
+        guest_session_id: user ? null : getGuestSessionId(),
+      };
+      const r = await api.post("/trips/generate", payload);
+      const generated = r.data.trip;
+      setTrip(generated);
       setMessages((m) => [
         ...m,
         {
           id: `m-${Date.now() + 1}`,
           role: "ai",
-          content:
-            "Done — your Paris itinerary is on the right. I've layered in 4 smart hacks that should save you about 2 hours and $258. Take a look and tell me what to tweak.",
+          content: `Done — your ${generated.destination} itinerary is on the right. I've layered in ${generated.smartHacks?.length || 0} smart hacks. Tell me what to tweak.`,
         },
       ]);
       toast.success("Itinerary ready", {
-        description: "Paris in Spring — 5 days handcrafted",
+        description: `${generated.title} — ${generated.duration} handcrafted`,
       });
-    }, 2400);
+    } catch (e) {
+      const msg = e?.response?.data?.detail || e?.message || "Generation failed";
+      toast.error("Couldn't generate the trip", { description: msg });
+      setMessages((m) => [
+        ...m,
+        {
+          id: `m-${Date.now() + 2}`,
+          role: "ai",
+          content: `I hit a snag generating that — ${msg}. Want to try again?`,
+        },
+      ]);
+    } finally {
+      setGenerating(false);
+    }
   };
 
   const handleSaveTrip = () => {
-    toast.message("Sign in to save", {
-      description: "Create a free account to keep your Paris trip.",
-    });
+    if (user) {
+      toast.success("Saved to your trips");
+    } else {
+      toast.message("Sign in to keep this trip", {
+        description: "Free — your draft will be moved to your account.",
+      });
+    }
   };
 
   return (
@@ -141,14 +190,13 @@ const Chat = () => {
     >
       {/* Left: Chat / Wizard */}
       <div className="w-full md:w-[45%] lg:w-[42%] xl:w-[40%] h-full flex flex-col border-r border-memento-parchment bg-white relative">
-        {/* Mobile back link */}
         <div className="md:hidden border-b border-memento-parchment px-4 py-3 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2 text-memento-espresso text-sm">
             <ArrowLeft className="w-4 h-4" />
             <span className="font-serif">Memento</span>
           </Link>
-          {hasItinerary && (
-            <Link to="/itinerary/trip-paris-001" className="text-xs font-medium text-memento-terracotta">
+          {trip && (
+            <Link to={`/itinerary/${trip.id}`} className="text-xs font-medium text-memento-terracotta">
               View itinerary →
             </Link>
           )}
@@ -172,14 +220,10 @@ const Chat = () => {
         )}
       </div>
 
-      {/* Right: Itinerary preview */}
+      {/* Right */}
       <div className="hidden md:flex md:w-[55%] lg:w-[58%] xl:w-[60%] h-full bg-memento-cream flex-col" data-testid="itinerary-side-panel">
-        {hasItinerary ? (
-          <ItineraryPanel
-            trip={PARIS_TRIP}
-            compact
-            onSave={handleSaveTrip}
-          />
+        {trip ? (
+          <ItineraryPanel trip={trip} compact onSave={handleSaveTrip} />
         ) : (
           <EmptyItineraryState />
         )}
@@ -209,8 +253,7 @@ const EmptyItineraryState = () => (
           Try saying
         </p>
         <p className="text-memento-espresso font-serif italic">
-          "Paris with my partner for 5 days, mid-April. We love art and good
-          food."
+          "Paris with my partner for 5 days, mid-April. We love art and good food."
         </p>
       </div>
     </div>

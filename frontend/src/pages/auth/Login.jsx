@@ -3,8 +3,11 @@ import { Mail, Lock, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useAuth } from "@/lib/auth";
 
+// REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
 const Login = () => {
+  const { signIn } = useAuth();
   return (
     <div className="min-h-screen flex bg-memento-cream" data-testid="login-page">
       {/* Left: image */}
@@ -52,6 +55,7 @@ const Login = () => {
           <div className="space-y-3 mb-6">
             <button
               data-testid="login-google"
+              onClick={signIn}
               className="w-full h-12 rounded-full border border-memento-parchment bg-white hover:bg-memento-sand flex items-center justify-center gap-3 text-sm font-medium text-memento-espresso transition-colors"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24">

@@ -13,6 +13,7 @@ import {
   ExternalLink,
   Bookmark,
 } from "lucide-react";
+import { getBookingUrl, getBookingLabel } from "@/lib/booking";
 
 const ICONS = {
   bed: Bed,
@@ -39,6 +40,8 @@ export const ActivityCard = ({ activity, dayIndex, activityIndex }) => {
   const Icon = ICONS[activity.icon] || MapPin;
   const colorClass =
     CATEGORY_COLORS[activity.category] || "bg-memento-sand text-memento-espresso";
+  const bookingUrl = getBookingUrl(activity);
+  const bookingLabel = getBookingLabel(activity);
 
   return (
     <div
@@ -56,7 +59,7 @@ export const ActivityCard = ({ activity, dayIndex, activityIndex }) => {
           </span>
         </div>
 
-        {/* Image */}
+        {/* Image (only when provided) */}
         {activity.image && (
           <div className="relative w-full sm:w-40 h-40 sm:h-auto shrink-0 overflow-hidden bg-memento-sand">
             <img
@@ -69,7 +72,6 @@ export const ActivityCard = ({ activity, dayIndex, activityIndex }) => {
 
         {/* Body */}
         <div className="flex-1 p-5 flex flex-col">
-          {/* Mobile time */}
           <div className="sm:hidden flex items-center gap-2 mb-2 text-xs text-memento-coffee">
             <span className="font-serif text-base text-memento-espresso">
               {activity.time}
@@ -79,14 +81,12 @@ export const ActivityCard = ({ activity, dayIndex, activityIndex }) => {
           </div>
 
           <div className="flex items-start justify-between gap-3 mb-2">
-            <div className="flex items-start gap-2.5">
-              <span
-                className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] uppercase tracking-wider font-bold ${colorClass}`}
-              >
-                <Icon className="w-3 h-3" />
-                {activity.category}
-              </span>
-            </div>
+            <span
+              className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] uppercase tracking-wider font-bold ${colorClass}`}
+            >
+              <Icon className="w-3 h-3" />
+              {activity.category}
+            </span>
             <button
               data-testid={`activity-bookmark-${activity.id}`}
               className="shrink-0 w-7 h-7 rounded-full hover:bg-memento-sand flex items-center justify-center text-memento-coffee hover:text-memento-terracotta transition-colors"
@@ -113,17 +113,19 @@ export const ActivityCard = ({ activity, dayIndex, activityIndex }) => {
             <span className="text-sm font-semibold text-memento-espresso">
               {activity.cost}
             </span>
-            <button
+            <a
+              href={bookingUrl}
+              target="_blank"
+              rel="noopener noreferrer"
               data-testid={`activity-book-${activity.id}`}
               className="text-xs font-semibold text-memento-terracotta hover:text-memento-terracotta-dark flex items-center gap-1"
             >
-              Book
+              {bookingLabel}
               <ExternalLink className="w-3 h-3" />
-            </button>
+            </a>
           </div>
         </div>
 
-        {/* Pin number */}
         <div className="absolute top-4 left-4 w-7 h-7 rounded-full bg-memento-espresso text-memento-cream flex items-center justify-center font-bold text-xs shadow-md border-2 border-white sm:hidden">
           {dayIndex + 1}.{activityIndex + 1}
         </div>
