@@ -5,12 +5,8 @@ Build the frontend for a web app called Memento, a smart travel planner app, ref
 
 ## Phases
 - **Phase 1 (Feb 2026)**: Frontend MVP with mock data — 9 routes, editorial light theme, all UI flows.
-- **Phase 2 (Feb 2026)**: Real backend wired:
-  - Gemini 3 Pro (primary) + Claude Sonnet 4.5 (fallback) via Emergent LLM Key
-  - Emergent-managed Google Auth (Bearer-token, localStorage)
-  - MongoDB persistence with guest-session claim flow
-  - Mapbox GL JS map integration
-  - Generic search-URL booking deep-links
+- **Phase 2 (Feb 2026)**: Real backend wired — Gemini 3 Pro / Claude 4.5 LLM, Emergent Google Auth (Bearer-token), MongoDB persistence, Mapbox, generic booking deep-links.
+- **Phase 3 (Feb 2026)**: Share links, saved items API, booking price fetching with skeletons, mobile/responsive pass, conversational LLM editing of itineraries.
 
 ## Tech Stack
 - **Frontend**: React 19 (CRA) + Tailwind CSS + shadcn/ui + lucide-react + sonner + React Router v7 + axios + mapbox-gl
@@ -55,27 +51,29 @@ The Kubernetes ingress forces `Access-Control-Allow-Origin: *` on every response
 - ✅ All `data-testid` attributes
 - ✅ E2E tested 100%
 
-**Phase 2 (Feb 2026):**
-- ✅ Gemini 3 Pro itinerary generation (verified — full Lisbon trip with 3 days, smart hacks, lat/lng)
-- ✅ Claude Sonnet 4.5 fallback chain
-- ✅ Emergent Google Auth — Bearer token persisted in localStorage
-- ✅ MongoDB collections: `users`, `user_sessions`, `trips`
-- ✅ Guest-session claim on sign-in
-- ✅ Mapbox GL JS — light style, terracotta numbered pins, popup on click
-- ✅ Generic booking deep-links (Google Hotels / Maps / Search)
-- ✅ NavRail auth-aware (avatar + logout when signed in, "IN" pill otherwise)
-- ✅ 15/15 pytest pass (incl. 2 real LLM generations)
-
-## Known platform quirks
-- **Mapbox in playwright sandbox**: postMessage worker errors when running inside the testing iframe — sandbox-specific, real users see the map fine.
-- **CORS `*` from ingress**: solved by switching to Bearer auth.
+**Phase 3 (Feb 2026):**
+- ✅ Public share links: `POST /api/trips/:id/share` → token; `GET /api/share/:token` returns trip; `/share/:token` route renders read-only `<ItineraryPanel readOnly>` + viral "Plan yours" CTA
+- ✅ Saved items wired: bookmark on activity card POSTs to `/api/saved`; Saved.jsx fetches & supports remove
+- ✅ Booking prices: `GET /api/booking/prices?ids=...` with 400ms artificial latency, deterministic provider/rating per id; ActivityCard renders shimmer skeleton then '$93 via GetYourGuide ★4.7 (975)'
+- ✅ Mobile/responsive: Chat page now toggles between chat panel and itinerary panel via internal mobileView state on viewports < md (768px); 'View itinerary' / 'Back to chat' headers
+- ✅ Conversational editing: when a trip exists, chat composer routes to `POST /api/trips/:id/edit` instead of intake — Gemini 3 Pro mutates trip JSON, frontend swaps in updated trip
+- ✅ 23/23 pytest pass (incl. 2 real LLM calls — generate + edit)
 
 ## P1 Backlog (next)
-- Real-time conversational editing of itinerary ("make day 3 less touristy" → mutate trip JSON via LLM)
-- Trip share link `/share/:token` read-only public view
-- Saved items — wire to backend
-- Skeleton-loader price fetching for booking cards
-- Phone/responsive testing pass
+- Settings page wired to backend (real profile, preferences, privacy)
+- Multi-trip saved/explore filtering
+- OG image generator for share preview cards (iMessage/Twitter unfurl)
+- Native trip PDF export (download button)
+- Real affiliate IDs in booking deep-links
+
+## P2 Backlog
+- Social media preference learning (PRD v2.0)
+- Voice planning assistant
+- Memento Gift recommender
+- Multilingual support
+- Pro subscription tier
+ button)
+- Real affiliate IDs in booking deep-links
 
 ## P2 Backlog
 - Social media preference learning (PRD v2.0)
