@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { api, getGuestSessionId, clearGuestSessionId, setToken, clearToken, getToken } from "./api";
+import { api, getGuestSessionId, clearGuestSessionId } from "./api";
 
 // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
 const EMERGENT_AUTH_URL = "https://auth.emergentagent.com";
@@ -20,16 +20,10 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
-    if (!getToken()) {
-      setUser(null);
-      setLoading(false);
-      return;
-    }
     try {
       const r = await api.get("/auth/me");
       setUser(r.data);
     } catch (_e) {
-      clearToken();
       setUser(null);
     } finally {
       setLoading(false);
@@ -38,7 +32,9 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     // CRITICAL: If returning from OAuth callback, skip the /me check.
-    // AuthCallback will exchange the session_id and establish the session first.
+    // AuthCallback will exchange the session_id and set the httpOnly cookie first.
+    // Intentionally reads window.location.hash once at mount — this is a one-time
+    // OAuth redirect detection, not a reactive location subscription.
     if (window.location.hash?.includes("session_id=")) {
       setLoading(false);
       return;
@@ -58,7 +54,6 @@ export const AuthProvider = ({ children }) => {
     } catch (_e) {
       /* ignore */
     }
-    clearToken();
     clearGuestSessionId();
     setUser(null);
   }, []);
@@ -89,13 +84,11 @@ export const AuthCallback = () => {
     let cancelled = false;
     (async () => {
       try {
-        const resp = await api.post("/auth/session", {
+        await api.post("/auth/session", {
           session_id: sessionId,
           guest_session_id: guestId,
         });
-        if (resp.data?.session_token) {
-          setToken(resp.data.session_token);
-        }
+        // Server sets httpOnly cookie — no token stored in JS.
         await refresh();
         if (!cancelled) {
           window.history.replaceState(null, "", window.location.pathname);
@@ -111,6 +104,7 @@ export const AuthCallback = () => {
     return () => {
       cancelled = true;
     };
+    // Intentionally empty deps: runs once on mount to process OAuth callback hash.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Calendar, Users, Wallet, Share2, Download, Heart, Check, Mail, Send } from "lucide-react";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
@@ -43,6 +44,10 @@ export const ItineraryPanel = ({ trip, compact = false, onSave, readOnly = false
     } finally {
       setCreatingShare(false);
     }
+  };
+
+  const handleDownload = () => {
+    window.print();
   };
 
   return (
@@ -98,6 +103,7 @@ export const ItineraryPanel = ({ trip, compact = false, onSave, readOnly = false
               <Mail className="w-4 h-4" />
             </button>
             <button
+              onClick={handleDownload}
               data-testid="itinerary-download-btn"
               className="w-10 h-10 rounded-full bg-white/95 backdrop-blur-sm hover:bg-white text-memento-espresso flex items-center justify-center shadow-sm transition-colors"
               aria-label="Download"
@@ -183,7 +189,7 @@ export const ItineraryPanel = ({ trip, compact = false, onSave, readOnly = false
         {/* Smart hacks */}
         {trip.smartHacks && trip.smartHacks.length > 0 && (
           <div className="mb-12">
-            <SmartHacksStrip hacks={trip.smartHacks} />
+            <SmartHacksStrip hacks={trip.smartHacks} tripId={trip.id} />
           </div>
         )}
 
@@ -194,13 +200,15 @@ export const ItineraryPanel = ({ trip, compact = false, onSave, readOnly = false
               Day-by-day
             </h2>
             {!readOnly && (
-              <Button
-                variant="ghost"
-                data-testid="itinerary-edit-with-ai"
-                className="text-xs font-medium text-memento-terracotta hover:bg-memento-sand rounded-full"
-              >
-                Edit with AI →
-              </Button>
+              <Link to="/chat" state={{ tripId: trip.id }}>
+                <Button
+                  variant="ghost"
+                  data-testid="itinerary-edit-with-ai"
+                  className="text-xs font-medium text-memento-terracotta hover:bg-memento-sand rounded-full"
+                >
+                  Edit with AI →
+                </Button>
+              </Link>
             )}
           </div>
           {(trip.days || []).map((d, i) => (

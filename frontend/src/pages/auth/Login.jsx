@@ -89,8 +89,8 @@ const Login = () => {
             </div>
           </div>
 
-          {/* Email form */}
-          <form className="space-y-4" onSubmit={(e) => e.preventDefault()}>
+          {/* Email/password sign-in — coming soon; disabled to prevent user confusion */}
+          <div className="space-y-4 opacity-50 pointer-events-none select-none" aria-hidden="true">
             <div>
               <Label htmlFor="email" className="text-xs uppercase tracking-wider text-memento-coffee font-semibold">
                 Email
@@ -102,19 +102,15 @@ const Login = () => {
                   type="email"
                   data-testid="login-email"
                   placeholder="you@email.com"
+                  tabIndex={-1}
                   className="pl-11 h-12 rounded-xl border-memento-parchment bg-white"
                 />
               </div>
             </div>
             <div>
-              <div className="flex items-center justify-between">
-                <Label htmlFor="password" className="text-xs uppercase tracking-wider text-memento-coffee font-semibold">
-                  Password
-                </Label>
-                <a href="#" className="text-xs text-memento-terracotta hover:text-memento-terracotta-dark">
-                  Forgot?
-                </a>
-              </div>
+              <Label htmlFor="password" className="text-xs uppercase tracking-wider text-memento-coffee font-semibold">
+                Password
+              </Label>
               <div className="relative mt-1.5">
                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-memento-coffee" />
                 <Input
@@ -122,19 +118,23 @@ const Login = () => {
                   type="password"
                   data-testid="login-password"
                   placeholder="••••••••"
+                  tabIndex={-1}
                   className="pl-11 h-12 rounded-xl border-memento-parchment bg-white"
                 />
               </div>
             </div>
             <Button
-              type="submit"
+              disabled
               data-testid="login-submit"
-              className="w-full h-12 rounded-full bg-memento-terracotta hover:bg-memento-terracotta-dark text-white font-medium"
+              className="w-full h-12 rounded-full bg-memento-terracotta text-white font-medium"
             >
               Sign in
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
-          </form>
+          </div>
+          <p className="text-xs text-center text-memento-coffee mt-2">
+            Email sign-in coming soon — use Google above.
+          </p>
 
           <p className="text-sm text-memento-coffee text-center mt-8">
             New here?{" "}

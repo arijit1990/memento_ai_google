@@ -1,14 +1,12 @@
 // SSE-style streaming POST consumer. Yields parsed events as they arrive.
-import { API, getToken } from "@/lib/api";
+// Auth is via httpOnly cookie sent automatically via credentials: "include".
+import { API } from "@/lib/api";
 
 export const streamGenerate = async function* (body) {
-  const headers = { "Content-Type": "application/json" };
-  const t = getToken();
-  if (t) headers.Authorization = `Bearer ${t}`;
-
   const resp = await fetch(`${API}/trips/generate/stream`, {
     method: "POST",
-    headers,
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify(body),
   });
   if (!resp.ok || !resp.body) {

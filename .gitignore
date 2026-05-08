@@ -4,6 +4,9 @@
 .idea/
 .vscode/
 
+# Git config should never be committed
+.gitconfig
+
 # Dependencies
 node_modules/
 /node_modules

@@ -1,9 +1,29 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Sparkles, Check, Clock, DollarSign } from "lucide-react";
 import { toast } from "sonner";
 
-export const SmartHacksStrip = ({ hacks }) => {
-  const [applied, setApplied] = useState(new Set());
+const STORAGE_KEY = (tripId) => `memento_hacks_${tripId}`;
+
+export const SmartHacksStrip = ({ hacks, tripId }) => {
+  const [applied, setApplied] = useState(() => {
+    if (!tripId) return new Set();
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY(tripId));
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
+  // Persist applied hacks to localStorage whenever they change
+  useEffect(() => {
+    if (!tripId) return;
+    try {
+      localStorage.setItem(STORAGE_KEY(tripId), JSON.stringify([...applied]));
+    } catch {
+      /* storage may be blocked in private browsing */
+    }
+  }, [applied, tripId]);
 
   const apply = (h) => {
     if (applied.has(h.id)) return;

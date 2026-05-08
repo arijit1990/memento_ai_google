@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Search, TrendingUp, Sparkles } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -25,6 +26,8 @@ const COLLECTIONS = [
 ];
 
 const Explore = () => {
+  const [query, setQuery] = useState("");
+
   return (
     <div className="min-h-screen bg-memento-cream" data-testid="explore-page">
       {/* Hero */}
@@ -44,6 +47,8 @@ const Explore = () => {
           <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-memento-coffee" />
           <Input
             data-testid="explore-search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
             placeholder="Search a city, country, or vibe..."
             className="pl-12 h-14 rounded-full border-memento-parchment bg-white text-base shadow-[0_4px_20px_rgb(0,0,0,0.04)]"
           />
@@ -59,7 +64,15 @@ const Explore = () => {
           </h2>
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-5">
-          {DESTINATIONS.map((d, i) => (
+          {DESTINATIONS.filter((d) => {
+            if (!query) return true;
+            const q = query.toLowerCase();
+            return (
+              d.name.toLowerCase().includes(q) ||
+              d.country.toLowerCase().includes(q) ||
+              (d.tagline || "").toLowerCase().includes(q)
+            );
+          }).map((d, i) => (
             <Link
               key={d.name}
               to="/chat"

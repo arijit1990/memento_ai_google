@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Mail, Send, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -13,11 +13,14 @@ export const ExportModal = ({ open, onClose, trip }) => {
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
 
-  // Sync email when user signs in / out
-  const initialEmail = user?.email || "";
-  if (!open && (email !== initialEmail || done)) {
-    // reset on close
-  }
+  // Reset all state each time the modal opens or the signed-in user changes
+  useEffect(() => {
+    if (!open) {
+      setEmail(user?.email || "");
+      setDone(false);
+      setSubmitting(false);
+    }
+  }, [open, user]);
 
   if (!open) return null;
 
@@ -39,7 +42,6 @@ export const ExportModal = ({ open, onClose, trip }) => {
       setDone(true);
       toast.success("Sent", { description: `Trip exported to ${email}` });
       setTimeout(() => {
-        setDone(false);
         onClose();
       }, 1800);
     } catch (err) {

@@ -85,7 +85,8 @@ const Signup = () => {
             </div>
           </div>
 
-          <form className="space-y-4" onSubmit={(e) => e.preventDefault()}>
+          {/* Email/password sign-up — coming soon; disabled to prevent user confusion */}
+          <div className="space-y-4 opacity-50 pointer-events-none select-none" aria-hidden="true">
             <div>
               <Label htmlFor="name" className="text-xs uppercase tracking-wider text-memento-coffee font-semibold">
                 Name
@@ -96,6 +97,7 @@ const Signup = () => {
                   id="name"
                   data-testid="signup-name"
                   placeholder="Jordan Smith"
+                  tabIndex={-1}
                   className="pl-11 h-12 rounded-xl border-memento-parchment bg-white"
                 />
               </div>
@@ -111,6 +113,7 @@ const Signup = () => {
                   type="email"
                   data-testid="signup-email"
                   placeholder="you@email.com"
+                  tabIndex={-1}
                   className="pl-11 h-12 rounded-xl border-memento-parchment bg-white"
                 />
               </div>
@@ -126,32 +129,24 @@ const Signup = () => {
                   type="password"
                   data-testid="signup-password"
                   placeholder="At least 8 characters"
+                  tabIndex={-1}
                   className="pl-11 h-12 rounded-xl border-memento-parchment bg-white"
                 />
               </div>
             </div>
 
-            <p className="text-xs text-memento-coffee leading-relaxed">
-              By creating an account, you agree to our{" "}
-              <a href="#" className="text-memento-terracotta hover:underline">
-                Terms
-              </a>{" "}
-              and{" "}
-              <a href="#" className="text-memento-terracotta hover:underline">
-                Privacy Policy
-              </a>
-              .
-            </p>
-
             <Button
-              type="submit"
+              disabled
               data-testid="signup-submit"
-              className="w-full h-12 rounded-full bg-memento-terracotta hover:bg-memento-terracotta-dark text-white font-medium"
+              className="w-full h-12 rounded-full bg-memento-terracotta text-white font-medium"
             >
               Create account
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
-          </form>
+          </div>
+          <p className="text-xs text-center text-memento-coffee mt-2">
+            Email sign-up coming soon — use Google above.
+          </p>
 
           <p className="text-sm text-memento-coffee text-center mt-8">
             Already have one?{" "}

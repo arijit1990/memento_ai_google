@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, Cookie
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
@@ -13,9 +14,16 @@ from typing import List, Optional, Any, Dict
 import uuid
 from datetime import datetime, timezone, timedelta
 import httpx
+import re
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
+
+# Fail fast with clear messages if required env vars are missing
+_REQUIRED_ENV = ["MONGO_URL", "DB_NAME", "EMERGENT_LLM_KEY"]
+for _key in _REQUIRED_ENV:
+    if not os.environ.get(_key):
+        raise RuntimeError(f"Required environment variable '{_key}' is not set. Check your .env file.")
 
 # MongoDB connection
 mongo_url = os.environ["MONGO_URL"]
@@ -28,8 +36,16 @@ EMERGENT_AUTH_BASE = os.environ.get(
     "https://demobackend.emergentagent.com/auth/v1/env",
 )
 EXPORT_WEBHOOK_URL = os.environ.get("EXPORT_WEBHOOK_URL")
+FRONTEND_BASE_URL = os.environ.get("FRONTEND_BASE_URL", "http://localhost:3000")
 
-app = FastAPI(title="Memento API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    client.close()
+
+
+app = FastAPI(title="Memento API", lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
 
 # ---------------------------- Models ----------------------------
@@ -42,10 +58,12 @@ class StatusCheck(BaseModel):
 
 
 class StatusCheckCreate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     client_name: str
 
 
 class User(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     user_id: str
     email: str
     name: str
@@ -54,6 +72,7 @@ class User(BaseModel):
 
 
 class IntakeData(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     destination: str
     dates: Optional[str] = "Flexible"
     group: Optional[str] = "2 adults"
@@ -63,19 +82,23 @@ class IntakeData(BaseModel):
 
 
 class GenerateTripRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     intake: IntakeData
     guest_session_id: Optional[str] = None
 
 
 class ClaimGuestRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     guest_session_id: str
 
 
 class EditTripRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     message: str
 
 
 class SaveItemRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     title: str
     type: str
     location: Optional[str] = ""
@@ -86,6 +109,7 @@ class SaveItemRequest(BaseModel):
 
 
 class ExportTripRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     email: str
     guest_session_id: Optional[str] = None
 
@@ -96,12 +120,8 @@ async def get_current_user(
     request: Request,
     session_token: Optional[str] = Cookie(default=None),
 ) -> Optional[Dict[str, Any]]:
-    """Read session from cookie OR Authorization header. Return user dict or None."""
+    """Read session from httpOnly cookie. Return user dict or None."""
     token = session_token
-    if not token:
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            token = auth[7:]
     if not token:
         return None
 
@@ -215,7 +235,7 @@ async def auth_session(
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
 
-    # Set httpOnly cookie
+    # Set httpOnly cookie — this is the sole credential mechanism for browsers.
     response.set_cookie(
         key="session_token",
         value=session_token,
@@ -236,7 +256,8 @@ async def auth_session(
         claimed = result.modified_count
 
     user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-    return {"user": user_doc, "trips_claimed": claimed, "session_token": session_token}
+    # session_token intentionally omitted from response body — only in httpOnly cookie.
+    return {"user": user_doc, "trips_claimed": claimed}
 
 
 @api_router.get("/auth/me")
@@ -250,13 +271,8 @@ async def auth_logout(
     response: Response,
     session_token: Optional[str] = Cookie(default=None),
 ):
-    token = session_token
-    if not token:
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            token = auth[7:]
-    if token:
-        await db.user_sessions.delete_one({"session_token": token})
+    if session_token:
+        await db.user_sessions.delete_one({"session_token": session_token})
     response.delete_cookie("session_token", path="/")
     return {"ok": True}
 
@@ -364,19 +380,18 @@ def extract_json(raw: str) -> Dict[str, Any]:
     """Strip code fences and extract first valid JSON object from LLM output."""
     s = raw.strip()
     if s.startswith("```"):
-        # Remove fenced block
         s = s.split("```", 2)
         s = s[1] if len(s) > 1 else raw
         if s.lstrip().lower().startswith("json"):
             s = s.lstrip()[4:].lstrip()
         if "```" in s:
             s = s.split("```", 1)[0]
-    # Find first { and last }
     start = s.find("{")
-    end = s.rfind("}")
-    if start == -1 or end == -1:
+    if start == -1:
         raise ValueError("No JSON object found in LLM response")
-    return json.loads(s[start:end + 1])
+    decoder = json.JSONDecoder()
+    obj, _ = decoder.raw_decode(s, start)
+    return obj
 
 
 @api_router.post("/trips/generate")
@@ -385,7 +400,7 @@ async def generate_trip(
     request: Request,
     session_token: Optional[str] = Cookie(default=None),
 ):
-    """Generate an itinerary via Gemini 3 Pro (primary) → Claude Sonnet 4.5 (fallback)."""
+    """Generate an itinerary via Gemini 2.5 Flash (primary) → Claude Sonnet 4.5 (fallback)."""
     user = await get_current_user(request, session_token)
     user_id = user["user_id"] if user else None
     guest_session_id = body.guest_session_id if not user_id else None
@@ -420,8 +435,6 @@ async def generate_trip(
         raise HTTPException(status_code=502, detail=f"LLM returned malformed JSON: {e}")
 
     trip_id = f"trip-{uuid.uuid4().hex[:10]}"
-    # Cover is left empty — frontend uses a warm gradient fallback when missing.
-    # (Was using deprecated source.unsplash.com which intermittently 404s.)
 
     doc = {
         "trip_id": trip_id,
@@ -442,10 +455,7 @@ async def generate_trip_stream(
     request: Request,
     session_token: Optional[str] = Cookie(default=None),
 ):
-    """Same as /trips/generate but streams progress events via SSE.
-    Yields {type: 'status', message: str} events while LLM runs,
-    then {type: 'done', trip_id, trip, model} on success
-    or {type: 'error', detail} on failure."""
+    """Same as /trips/generate but streams progress events via SSE."""
     user = await get_current_user(request, session_token)
     user_id = user["user_id"] if user else None
     guest_session_id = body.guest_session_id if not user_id else None
@@ -463,7 +473,6 @@ async def generate_trip_stream(
         yield evt({"type": "status", "message": f"Researching {dest}..."})
         await asyncio.sleep(0.1)
 
-        # Schedule LLM call as a background task; emit status updates while it runs
         attempts = [
             ("gemini", "gemini-2.5-flash"),
             ("anthropic", "claude-sonnet-4-5-20250929"),
@@ -482,18 +491,27 @@ async def generate_trip_stream(
         last_err = None
         for provider, model in attempts:
             task = asyncio.create_task(call_llm(provider, model, intake))
-            start = asyncio.get_event_loop().time()
+            start = asyncio.get_running_loop().time()
             idx = 0
+            timed_out = False
             try:
                 while not task.done():
                     await asyncio.sleep(0.6)
-                    elapsed = asyncio.get_event_loop().time() - start
+                    elapsed = asyncio.get_running_loop().time() - start
                     if idx < len(timed_statuses) and elapsed >= timed_statuses[idx][0]:
                         yield evt({"type": "status", "message": timed_statuses[idx][1]})
                         idx += 1
                     if elapsed > 90:
+                        timed_out = True
                         task.cancel()
                         break
+                if timed_out:
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                    last_err = "timeout"
+                    continue
                 raw = await task
                 used_model = f"{provider}/{model}"
                 break
@@ -505,6 +523,13 @@ async def generate_trip_stream(
                 logging.exception("LLM stream call failed (%s/%s)", provider, model)
                 yield evt({"type": "status", "message": "Switching model — retrying..."})
                 continue
+            finally:
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
 
         if raw is None:
             yield evt({"type": "error", "detail": f"LLM unavailable: {last_err}"})
@@ -584,7 +609,6 @@ async def get_trip(
         raise HTTPException(status_code=404, detail="Trip not found")
 
     user = await get_current_user(request, session_token)
-    # Ownership check
     if row.get("user_id"):
         if not user or user["user_id"] != row["user_id"]:
             raise HTTPException(status_code=403, detail="Not your trip")
@@ -650,6 +674,7 @@ Rules:
 
 
 class IntakeRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     messages: List[Dict[str, str]]
     current_intake: Optional[Dict[str, Any]] = None
 
@@ -657,12 +682,19 @@ class IntakeRequest(BaseModel):
 @api_router.post("/chat/intake")
 async def chat_intake(body: IntakeRequest):
     """Cheap LLM call to parse free-text chat into structured intake.
-    Uses gemini-2.5-flash (~$0.0001/call). Caps history at last 12 messages
-    and 800 chars each to keep token cost bounded."""
+    Sends opening context (first 2 msgs) + recent messages (last 10) to preserve
+    early destination intent while keeping token cost bounded."""
     from emergentintegrations.llm.chat import LlmChat, UserMessage
 
+    msgs = body.messages
+    # Keep first 2 messages (opening context) + last 10 (recent interaction)
+    if len(msgs) > 12:
+        context_msgs = msgs[:2] + msgs[-10:]
+    else:
+        context_msgs = msgs
+
     convo_lines = []
-    for m in body.messages[-12:]:  # cap context — recent only
+    for m in context_msgs:
         role = m.get("role", "user")
         prefix = "User" if role == "user" else "Assistant"
         convo_lines.append(f"{prefix}: {m.get('content', '')[:800]}")
@@ -935,7 +967,7 @@ async def export_trip(
     payload = {
         "email": body.email,
         "trip": row["trip"],
-        "share_url": f"/share/{token}",
+        "share_url": f"{FRONTEND_BASE_URL}/share/{token}",
         "share_token": token,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "source": "memento",
@@ -961,7 +993,10 @@ async def export_trip(
 
 # ---------------------------- Booking prices (mock provider) ----------------------------
 
-# Deterministic pseudo-random pricing based on activity id — feels real, won't flicker
+_ACTIVITY_ID_RE = re.compile(r'^[a-zA-Z0-9_\-]{1,64}$')
+_MAX_PRICE_IDS = 50
+
+
 def _mock_price(activity_id: str) -> Dict[str, Any]:
     h = sum(ord(c) for c in activity_id)
     base = 18 + (h * 7) % 240
@@ -976,11 +1011,14 @@ def _mock_price(activity_id: str) -> Dict[str, Any]:
 
 @api_router.get("/booking/prices")
 async def booking_prices(ids: str):
-    """Return live-looking prices for a comma-separated list of activity ids.
-    Adds a tiny artificial delay so the frontend skeleton feels real."""
-    await asyncio.sleep(0.4)
+    """Return live-looking prices for a comma-separated list of activity ids."""
+    raw_ids = [x.strip() for x in ids.split(",") if x.strip()]
+    if len(raw_ids) > _MAX_PRICE_IDS:
+        raise HTTPException(status_code=400, detail=f"Maximum {_MAX_PRICE_IDS} IDs per request")
     out = {}
-    for aid in [x.strip() for x in ids.split(",") if x.strip()]:
+    for aid in raw_ids:
+        if not _ACTIVITY_ID_RE.match(aid):
+            continue
         out[aid] = _mock_price(aid)
     return {"prices": out}
 
@@ -991,8 +1029,8 @@ app.include_router(api_router)
 
 app.add_middleware(
     CORSMiddleware,
+    allow_origins=[FRONTEND_BASE_URL],
     allow_credentials=True,
-    allow_origin_regex=".*",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -1002,8 +1040,3 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()

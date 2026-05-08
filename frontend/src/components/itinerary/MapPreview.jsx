@@ -49,15 +49,8 @@ export const MapPreview = ({ trip }) => {
             strokeWidth="0.4"
             fill="none"
           />
-          {/* Park */}
+          {/* Abstract park area — no location-specific labels */}
           <ellipse cx="180" cy="115" rx="35" ry="22" fill="#D8E0C6" opacity="0.6" />
-          <text x="167" y="118" fontSize="6" fill="#5C5449" fontFamily="Outfit">
-            Tuileries
-          </text>
-          {/* River label */}
-          <text x="180" y="158" fontSize="6" fill="#7A6F5B" fontStyle="italic">
-            La Seine
-          </text>
         </svg>
       </div>
 

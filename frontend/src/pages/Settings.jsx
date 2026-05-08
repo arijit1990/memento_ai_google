@@ -1,11 +1,23 @@
+import { useState } from "react";
 import { Camera, Lock, Trash2, Mail, Globe2, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useAuth } from "@/lib/auth";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 
 const Settings = () => {
+  const { user } = useAuth();
+  const firstName = user?.name?.split(" ")[0] || "";
+  const lastName = user?.name?.split(" ").slice(1).join(" ") || "";
+
+  const handleSave = (e) => {
+    e.preventDefault();
+    toast.success("Settings saved", { description: "Your profile has been updated." });
+  };
+
   return (
     <div className="min-h-screen bg-memento-cream" data-testid="settings-page">
       <div className="max-w-3xl mx-auto px-6 lg:px-12 py-12 lg:py-16">
@@ -23,9 +35,13 @@ const Settings = () => {
           </h2>
           <div className="flex items-center gap-5 mb-7">
             <div className="relative">
-              <div className="w-20 h-20 rounded-full bg-memento-sand flex items-center justify-center font-serif text-3xl text-memento-espresso">
-                JS
-              </div>
+              {user?.picture ? (
+                <img src={user.picture} alt={user.name} className="w-20 h-20 rounded-full object-cover" />
+              ) : (
+                <div className="w-20 h-20 rounded-full bg-memento-sand flex items-center justify-center font-serif text-3xl text-memento-espresso">
+                  {(firstName[0] || "") + (lastName[0] || "")}
+                </div>
+              )}
               <button
                 data-testid="settings-avatar-upload"
                 className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-memento-terracotta text-white flex items-center justify-center shadow-md hover:bg-memento-terracotta-dark"
@@ -34,10 +50,11 @@ const Settings = () => {
               </button>
             </div>
             <div>
-              <p className="font-medium text-memento-espresso">Jordan Smith</p>
-              <p className="text-sm text-memento-coffee">jordan@memento.app</p>
+              <p className="font-medium text-memento-espresso">{user?.name || "—"}</p>
+              <p className="text-sm text-memento-coffee">{user?.email || "—"}</p>
             </div>
           </div>
+          <form onSubmit={handleSave}>
           <div className="grid sm:grid-cols-2 gap-4">
             <div>
               <Label htmlFor="firstName" className="text-xs uppercase tracking-wider text-memento-coffee font-semibold">
@@ -46,7 +63,7 @@ const Settings = () => {
               <Input
                 id="firstName"
                 data-testid="settings-firstname"
-                defaultValue="Jordan"
+                defaultValue={firstName}
                 className="mt-1.5 h-11 rounded-xl border-memento-parchment"
               />
             </div>
@@ -57,7 +74,7 @@ const Settings = () => {
               <Input
                 id="lastName"
                 data-testid="settings-lastname"
-                defaultValue="Smith"
+                defaultValue={lastName}
                 className="mt-1.5 h-11 rounded-xl border-memento-parchment"
               />
             </div>
@@ -68,11 +85,12 @@ const Settings = () => {
               <Input
                 id="email"
                 data-testid="settings-email"
-                defaultValue="jordan@memento.app"
+                defaultValue={user?.email || ""}
                 className="mt-1.5 h-11 rounded-xl border-memento-parchment"
               />
             </div>
           </div>
+          </form>
         </section>
 
         {/* Preferences */}
@@ -145,6 +163,7 @@ const Settings = () => {
             Cancel
           </Button>
           <Button
+            onClick={handleSave}
             data-testid="settings-save"
             className="bg-memento-terracotta hover:bg-memento-terracotta-dark text-white rounded-full h-11 px-7"
           >

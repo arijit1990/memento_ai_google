@@ -25,14 +25,18 @@ def api():
     return s
 
 
+DB_NAME = os.environ.get("DB_NAME", "test_database")
+
+
 @pytest.fixture(scope="session")
 def seeded_session():
-    """Seed a user + session_token directly into mongo using mongosh."""
+    """Seed a user + session_token directly into mongo using mongosh.
+    Uses DB_NAME env var so tests always target the same database as the server."""
     user_id = f"test-user-{int(time.time())}"
     token = f"test_session_{uuid.uuid4().hex}"
     email = f"test.user.{int(time.time())}@example.com"
     js = f"""
-    use('test_database');
+    use('{DB_NAME}');
     db.users.insertOne({{
       user_id: '{user_id}',
       email: '{email}',
@@ -52,7 +56,7 @@ def seeded_session():
     yield {"user_id": user_id, "token": token, "email": email}
     # cleanup
     cleanup = f"""
-    use('test_database');
+    use('{DB_NAME}');
     db.users.deleteOne({{user_id: '{user_id}'}});
     db.user_sessions.deleteMany({{user_id: '{user_id}'}});
     db.trips.deleteMany({{user_id: '{user_id}'}});

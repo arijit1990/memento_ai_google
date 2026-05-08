@@ -18,8 +18,7 @@ const Itinerary = () => {
 
   useEffect(() => {
     let cancelled = false;
-    const fetch = async () => {
-      // Demo fallback for the bundled sample
+    const loadTrip = async () => {
       if (id === "trip-paris-001") {
         if (!cancelled) {
           setTrip(PARIS_TRIP);
@@ -42,7 +41,7 @@ const Itinerary = () => {
         }
       }
     };
-    fetch();
+    loadTrip();
     return () => {
       cancelled = true;
     };
@@ -60,7 +59,8 @@ const Itinerary = () => {
             <ArrowLeft className="w-4 h-4" />
             All trips
           </Link>
-          <Link to="/chat" data-testid="itinerary-edit-link">
+          {/* Pass the trip id via router state so Chat can load the existing trip */}
+          <Link to="/chat" state={{ tripId: id }} data-testid="itinerary-edit-link">
             <Button className="bg-memento-espresso hover:bg-memento-coffee text-memento-cream rounded-full h-9 px-4 text-xs">
               <MessageCircle className="w-3.5 h-3.5 mr-1.5" />
               Edit with AI

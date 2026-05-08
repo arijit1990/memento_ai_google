@@ -26,12 +26,8 @@ const Trips = () => {
         });
         if (cancelled) return;
         const real = r.data?.trips || [];
-        // Merge bundled sample (Paris) for demo unless user has overrides
-        const merged = [...real];
-        if (!real.some((t) => t.id === "trip-paris-001")) {
-          merged.push(...SAMPLE_TRIPS);
-        }
-        setTrips(merged);
+        // Only show sample trips when the user has no real trips yet
+        setTrips(real.length > 0 ? real : SAMPLE_TRIPS);
       } catch (_e) {
         if (!cancelled) setTrips(SAMPLE_TRIPS);
       } finally {
