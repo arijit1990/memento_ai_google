@@ -1,4 +1,5 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, Cookie
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -26,6 +27,7 @@ EMERGENT_AUTH_BASE = os.environ.get(
     "EMERGENT_AUTH_BASE",
     "https://demobackend.emergentagent.com/auth/v1/env",
 )
+EXPORT_WEBHOOK_URL = os.environ.get("EXPORT_WEBHOOK_URL")
 
 app = FastAPI(title="Memento API")
 api_router = APIRouter(prefix="/api")
@@ -80,6 +82,11 @@ class SaveItemRequest(BaseModel):
     image: Optional[str] = ""
     activity_id: Optional[str] = None
     trip_id: Optional[str] = None
+    guest_session_id: Optional[str] = None
+
+
+class ExportTripRequest(BaseModel):
+    email: str
     guest_session_id: Optional[str] = None
 
 
@@ -427,6 +434,109 @@ async def generate_trip(
     await db.trips.insert_one(doc)
 
     return {"trip_id": trip_id, "trip": doc["trip"], "model": used_model}
+
+
+@api_router.post("/trips/generate/stream")
+async def generate_trip_stream(
+    body: GenerateTripRequest,
+    request: Request,
+    session_token: Optional[str] = Cookie(default=None),
+):
+    """Same as /trips/generate but streams progress events via SSE.
+    Yields {type: 'status', message: str} events while LLM runs,
+    then {type: 'done', trip_id, trip, model} on success
+    or {type: 'error', detail} on failure."""
+    user = await get_current_user(request, session_token)
+    user_id = user["user_id"] if user else None
+    guest_session_id = body.guest_session_id if not user_id else None
+    if not user_id and not guest_session_id:
+        raise HTTPException(status_code=400, detail="user or guest_session_id required")
+
+    intake = body.intake
+    dest = intake.destination or "your destination"
+    vibe = ", ".join(intake.travelerType or []) or "your style"
+
+    async def event_stream():
+        def evt(payload: Dict[str, Any]) -> str:
+            return f"data: {json.dumps(payload)}\n\n"
+
+        yield evt({"type": "status", "message": f"Researching {dest}..."})
+        await asyncio.sleep(0.1)
+
+        # Schedule LLM call as a background task; emit status updates while it runs
+        attempts = [
+            ("gemini", "gemini-3.1-pro-preview"),
+            ("anthropic", "claude-sonnet-4-5-20250929"),
+        ]
+        timed_statuses = [
+            (2.5, f"Mapping neighborhoods in {dest}..."),
+            (6, f"Tuning for {vibe}..."),
+            (12, "Drafting day-by-day plan..."),
+            (22, "Layering smart hacks..."),
+            (35, "Polishing the details..."),
+            (55, "Almost there — final pass..."),
+        ]
+
+        raw = None
+        used_model = None
+        last_err = None
+        for provider, model in attempts:
+            task = asyncio.create_task(call_llm(provider, model, intake))
+            start = asyncio.get_event_loop().time()
+            idx = 0
+            try:
+                while not task.done():
+                    await asyncio.sleep(0.6)
+                    elapsed = asyncio.get_event_loop().time() - start
+                    if idx < len(timed_statuses) and elapsed >= timed_statuses[idx][0]:
+                        yield evt({"type": "status", "message": timed_statuses[idx][1]})
+                        idx += 1
+                    if elapsed > 90:
+                        task.cancel()
+                        break
+                raw = await task
+                used_model = f"{provider}/{model}"
+                break
+            except asyncio.CancelledError:
+                last_err = "timeout"
+                continue
+            except Exception as e:
+                last_err = str(e)
+                logging.exception("LLM stream call failed (%s/%s)", provider, model)
+                yield evt({"type": "status", "message": "Switching model — retrying..."})
+                continue
+
+        if raw is None:
+            yield evt({"type": "error", "detail": f"LLM unavailable: {last_err}"})
+            return
+
+        try:
+            trip_json = extract_json(raw)
+        except Exception as e:
+            yield evt({"type": "error", "detail": f"Malformed LLM output: {e}"})
+            return
+
+        trip_id = f"trip-{uuid.uuid4().hex[:10]}"
+        doc = {
+            "trip_id": trip_id,
+            "user_id": user_id,
+            "guest_session_id": guest_session_id,
+            "model": used_model,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "trip": {**trip_json, "id": trip_id, "cover": None},
+        }
+        await db.trips.insert_one(doc)
+        yield evt({"type": "done", "trip_id": trip_id, "trip": doc["trip"], "model": used_model})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # ---------------------------- Trip CRUD ----------------------------
@@ -780,6 +890,73 @@ async def delete_saved(
             raise HTTPException(status_code=403, detail="Not yours")
     await db.saved_items.delete_one({"id": item_id})
     return {"ok": True}
+
+
+# ---------------------------- Export webhook ----------------------------
+
+@api_router.post("/trips/{trip_id}/export")
+async def export_trip(
+    trip_id: str,
+    body: ExportTripRequest,
+    request: Request,
+    session_token: Optional[str] = Cookie(default=None),
+):
+    """Posts the full trip + recipient email to EXPORT_WEBHOOK_URL.
+    Caller's downstream automation (Zapier/Make/n8n/etc) handles email delivery."""
+    if not body.email or "@" not in body.email:
+        raise HTTPException(status_code=400, detail="Valid email required")
+    if not EXPORT_WEBHOOK_URL:
+        raise HTTPException(status_code=503, detail="Export webhook not configured")
+
+    row = await db.trips.find_one({"trip_id": trip_id}, {"_id": 0})
+    if not row:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    user = await get_current_user(request, session_token)
+    if row.get("user_id"):
+        if not user or user["user_id"] != row["user_id"]:
+            raise HTTPException(status_code=403, detail="Not your trip")
+    else:
+        if row.get("guest_session_id") != body.guest_session_id:
+            raise HTTPException(status_code=403, detail="Not your trip")
+
+    # Ensure a share token exists so the email can include a public link
+    share = await db.shares.find_one({"trip_id": trip_id}, {"_id": 0})
+    if not share:
+        token = uuid.uuid4().hex[:18]
+        await db.shares.insert_one({
+            "token": token,
+            "trip_id": trip_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    else:
+        token = share["token"]
+
+    payload = {
+        "email": body.email,
+        "trip": row["trip"],
+        "share_url": f"/share/{token}",
+        "share_token": token,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "source": "memento",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as h:
+            r = await h.post(EXPORT_WEBHOOK_URL, json=payload)
+        webhook_status = r.status_code
+    except Exception as e:
+        logging.exception("Export webhook failed")
+        raise HTTPException(status_code=502, detail=f"Webhook delivery failed: {e}")
+
+    await db.exports.insert_one({
+        "trip_id": trip_id,
+        "email": body.email,
+        "webhook_status": webhook_status,
+        "share_token": token,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"ok": webhook_status < 400, "share_token": token, "webhook_status": webhook_status}
 
 
 # ---------------------------- Booking prices (mock provider) ----------------------------

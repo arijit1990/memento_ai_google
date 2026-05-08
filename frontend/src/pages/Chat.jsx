@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Plane, ArrowLeft, MessageCircle, Map } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -10,6 +10,16 @@ import { SAMPLE_CHAT } from "@/lib/mockData";
 import { api, getGuestSessionId } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { cleanDestination } from "@/lib/intake";
+import { streamGenerate } from "@/lib/stream";
+
+const THINKING_PHRASES = [
+  "Listening...",
+  "Got it...",
+  "Pulling this together...",
+  "One sec...",
+  "Mulling it over...",
+  "Tracking that down...",
+];
 
 const Chat = () => {
   const { user } = useAuth();
@@ -22,7 +32,10 @@ const Chat = () => {
   const [intake, setIntake] = useState({});
   const [editing, setEditing] = useState(false);
   const [thinking, setThinking] = useState(false);
+  const [thinkingLabel, setThinkingLabel] = useState(THINKING_PHRASES[0]);
+  const [progressMessage, setProgressMessage] = useState("Handcrafting your itinerary...");
   const [mobileView, setMobileView] = useState("chat"); // 'chat' | 'itinerary' (mobile only)
+  const thinkingIdx = useRef(0);
 
   useEffect(() => {
     if (!user) getGuestSessionId();
@@ -49,6 +62,9 @@ const Chat = () => {
     }
 
     // LLM-driven intake extraction (gemini-2.5-flash, ~$0.0001/call)
+    // Cycle thinking copy to keep it warm/varied
+    thinkingIdx.current = (thinkingIdx.current + 1) % THINKING_PHRASES.length;
+    setThinkingLabel(THINKING_PHRASES[thinkingIdx.current]);
     setThinking(true);
     try {
       const r = await api.post("/chat/intake", {
@@ -152,28 +168,42 @@ const Chat = () => {
   const handleConfirm = async () => {
     setShowConfirm(false);
     setGenerating(true);
+    setProgressMessage("Handcrafting your itinerary...");
     setMessages((m) => [
       ...m,
       { id: `m-${Date.now()}`, role: "user", content: "Yes, generate it." },
     ]);
 
+    const payload = {
+      intake: {
+        destination: intake?.destination || "Paris, France",
+        dates: intake?.dates || "Flexible",
+        group: intake?.group || "2 adults",
+        travelerType:
+          (intake?.travelerType && intake.travelerType.length > 0)
+            ? intake.travelerType
+            : ["Explorer"],
+        tripType: intake?.tripType || "City Break",
+        budget: intake?.budget || "Flexible",
+      },
+      guest_session_id: user ? null : getGuestSessionId(),
+    };
+
     try {
-      const payload = {
-        intake: {
-          destination: intake?.destination || "Paris, France",
-          dates: intake?.dates || "Flexible",
-          group: intake?.group || "2 adults",
-          travelerType:
-            (intake?.travelerType && intake.travelerType.length > 0)
-              ? intake.travelerType
-              : ["Explorer"],
-          tripType: intake?.tripType || "City Break",
-          budget: intake?.budget || "Flexible",
-        },
-        guest_session_id: user ? null : getGuestSessionId(),
-      };
-      const r = await api.post("/trips/generate", payload);
-      const generated = r.data.trip;
+      let generated = null;
+      let errorDetail = null;
+      for await (const evt of streamGenerate(payload)) {
+        if (evt.type === "status" && evt.message) {
+          setProgressMessage(evt.message);
+        } else if (evt.type === "done" && evt.trip) {
+          generated = evt.trip;
+        } else if (evt.type === "error") {
+          errorDetail = evt.detail || "Generation failed";
+        }
+      }
+      if (errorDetail) throw new Error(errorDetail);
+      if (!generated) throw new Error("No trip received");
+
       setTrip(generated);
       setMobileView("itinerary");
       setMessages((m) => [
@@ -188,7 +218,7 @@ const Chat = () => {
         description: `${generated.title} — ${generated.duration} handcrafted`,
       });
     } catch (e) {
-      const msg = e?.response?.data?.detail || e?.message || "Generation failed";
+      const msg = e?.message || "Generation failed";
       toast.error("Couldn't generate the trip", { description: msg });
       setMessages((m) => [
         ...m,
@@ -257,8 +287,8 @@ const Chat = () => {
               editing
                 ? "Rewriting your itinerary..."
                 : generating
-                ? "Handcrafting your itinerary..."
-                : "Thinking..."
+                ? progressMessage
+                : thinkingLabel
             }
             showProgressBullets={generating}
             onSwitchToWizard={() => setMode("wizard")}
