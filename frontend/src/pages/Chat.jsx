@@ -256,10 +256,11 @@ const Chat = () => {
             generatingLabel={
               editing
                 ? "Rewriting your itinerary..."
-                : thinking
-                ? "Thinking..."
-                : "Handcrafting your itinerary..."
+                : generating
+                ? "Handcrafting your itinerary..."
+                : "Thinking..."
             }
+            showProgressBullets={generating}
             onSwitchToWizard={() => setMode("wizard")}
             showConfirmCard={showConfirm}
             confirmSummary={confirmSummary}
