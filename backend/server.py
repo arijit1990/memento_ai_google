@@ -20,7 +20,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 # Fail fast with clear messages if required env vars are missing
-_REQUIRED_ENV = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "GOOGLE_AI_KEY", "SUPABASE_JWT_SECRET"]
+_REQUIRED_ENV = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "GOOGLE_AI_KEY"]
 for _key in _REQUIRED_ENV:
     if not os.environ.get(_key):
         raise RuntimeError(f"Required environment variable '{_key}' is not set. Check your .env file.")
@@ -255,28 +255,25 @@ async def auth_session(
     body: Dict[str, Any],
 ):
     """Exchange a Supabase access_token for a server-side session cookie.
-    Verifies the JWT locally using SUPABASE_JWT_SECRET — no outbound HTTP call.
+    Uses supabase.auth.get_user() to verify the token — works with any JWT algorithm
+    (HS256 or RS256) and any Supabase version.
     Optionally claims a guest_session_id's trips on first sign-in."""
-    from jose import jwt as jose_jwt, JWTError
-
     access_token = body.get("access_token")
     guest_session_id = body.get("guest_session_id")
     if not access_token:
         raise HTTPException(status_code=400, detail="access_token required")
 
-    # Verify the Supabase JWT locally
+    # Verify token via Supabase admin client — handles RS256/HS256 automatically
     try:
-        payload = jose_jwt.decode(
-            access_token,
-            SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            options={"verify_aud": False},
-        )
-    except JWTError as e:
+        user_resp = await (await get_supa()).auth.get_user(access_token)
+        supa_user = user_resp.user
+        if not supa_user:
+            raise ValueError("No user returned")
+    except Exception as e:
         raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
 
-    email = payload.get("email")
-    user_metadata = payload.get("user_metadata", {})
+    email = supa_user.email
+    user_metadata = supa_user.user_metadata or {}
     name = user_metadata.get("full_name") or user_metadata.get("name") or email
     picture = user_metadata.get("avatar_url") or user_metadata.get("picture")
     session_token = uuid.uuid4().hex
