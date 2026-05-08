@@ -2,8 +2,9 @@ import { createContext, useContext, useEffect, useState, useCallback } from "rea
 import { useLocation, useNavigate } from "react-router-dom";
 import { api, getGuestSessionId, clearGuestSessionId } from "./api";
 
-// REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-const EMERGENT_AUTH_URL = "https://auth.emergentagent.com";
+// Auth provider URL — set REACT_APP_AUTH_URL in your .env to point at any OAuth provider.
+// Default is the Emergent hosted auth; swap this out for Vercel/custom deployments.
+const AUTH_URL = process.env.REACT_APP_AUTH_URL || "https://auth.emergentagent.com";
 
 const AuthContext = createContext({
   user: null,
@@ -43,9 +44,8 @@ export const AuthProvider = ({ children }) => {
   }, [refresh]);
 
   const signIn = useCallback(() => {
-    // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
     const redirectUrl = window.location.origin + "/trips";
-    window.location.href = `${EMERGENT_AUTH_URL}/?redirect=${encodeURIComponent(redirectUrl)}`;
+    window.location.href = `${AUTH_URL}/?redirect=${encodeURIComponent(redirectUrl)}`;
   }, []);
 
   const signOut = useCallback(async () => {

@@ -31,12 +31,18 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
-EMERGENT_AUTH_BASE = os.environ.get(
-    "EMERGENT_AUTH_BASE",
-    "https://demobackend.emergentagent.com/auth/v1/env",
-)
+# EMERGENT_AUTH_BASE is required — no hardcoded default so Vercel deployments are explicit
+EMERGENT_AUTH_BASE = os.environ.get("EMERGENT_AUTH_BASE")
 EXPORT_WEBHOOK_URL = os.environ.get("EXPORT_WEBHOOK_URL")
 FRONTEND_BASE_URL = os.environ.get("FRONTEND_BASE_URL", "http://localhost:3000")
+
+# LLM model config — override via env vars for A/B testing or provider switching
+LLM_PRIMARY_PROVIDER = os.environ.get("LLM_PRIMARY_PROVIDER", "gemini")
+LLM_PRIMARY_MODEL = os.environ.get("LLM_PRIMARY_MODEL", "gemini-2.5-flash")
+LLM_FALLBACK_PROVIDER = os.environ.get("LLM_FALLBACK_PROVIDER", "anthropic")
+LLM_FALLBACK_MODEL = os.environ.get("LLM_FALLBACK_MODEL", "claude-sonnet-4-5-20250929")
+LLM_INTAKE_PROVIDER = os.environ.get("LLM_INTAKE_PROVIDER", "gemini")
+LLM_INTAKE_MODEL = os.environ.get("LLM_INTAKE_MODEL", "gemini-2.5-flash")
 
 
 @asynccontextmanager
@@ -412,8 +418,8 @@ async def generate_trip(
     used_model = None
     last_err = None
     attempts = [
-        ("gemini", "gemini-2.5-flash"),
-        ("anthropic", "claude-sonnet-4-5-20250929"),
+        (LLM_PRIMARY_PROVIDER, LLM_PRIMARY_MODEL),
+        (LLM_FALLBACK_PROVIDER, LLM_FALLBACK_MODEL),
     ]
     for provider, model in attempts:
         try:
@@ -474,8 +480,8 @@ async def generate_trip_stream(
         await asyncio.sleep(0.1)
 
         attempts = [
-            ("gemini", "gemini-2.5-flash"),
-            ("anthropic", "claude-sonnet-4-5-20250929"),
+            (LLM_PRIMARY_PROVIDER, LLM_PRIMARY_MODEL),
+            (LLM_FALLBACK_PROVIDER, LLM_FALLBACK_MODEL),
         ]
         timed_statuses = [
             (2.5, f"Mapping neighborhoods in {dest}..."),
@@ -710,7 +716,7 @@ async def chat_intake(body: IntakeRequest):
         api_key=EMERGENT_LLM_KEY,
         session_id=f"intake-{uuid.uuid4().hex[:8]}",
         system_message=INTAKE_SYSTEM_PROMPT,
-    ).with_model("gemini", "gemini-2.5-flash")
+    ).with_model(LLM_INTAKE_PROVIDER, LLM_INTAKE_MODEL)
     user_msg = UserMessage(text=prompt)
     try:
         raw = await asyncio.wait_for(chat.send_message(user_msg), timeout=20)
@@ -783,8 +789,8 @@ async def edit_trip(
     used_model = None
     last_err = None
     for provider, model in [
-        ("gemini", "gemini-2.5-flash"),
-        ("anthropic", "claude-sonnet-4-5-20250929"),
+        (LLM_PRIMARY_PROVIDER, LLM_PRIMARY_MODEL),
+        (LLM_FALLBACK_PROVIDER, LLM_FALLBACK_MODEL),
     ]:
         try:
             raw = await asyncio.wait_for(

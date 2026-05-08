@@ -6,7 +6,7 @@ import uuid
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://journey-screens.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("BACKEND_URL", os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001")).rstrip("/")
 GUEST_SESSION_ID = f"guest_p5_{uuid.uuid4().hex[:8]}"
 LLM_TIMEOUT = 120
 
