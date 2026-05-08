@@ -221,7 +221,7 @@ async def root():
 async def debug_cors():
     """Returns the active CORS origins — useful for verifying Vercel env vars."""
     return {
-        "v": "sync-httpx",
+        "v": "debug-exc",
         "cors_origins": CORS_ORIGINS,
         "frontend_base_url": FRONTEND_BASE_URL,
         "cors_allowed_origins_env": os.environ.get("CORS_ALLOWED_ORIGINS", ""),
@@ -255,19 +255,34 @@ async def auth_session(
     response: Response,
     body: Dict[str, Any],
 ):
-    """Exchange a Supabase access_token for a server-side session cookie.
-    Verifies via direct httpx call to Supabase /auth/v1/user — avoids async client
-    issues on Vercel serverless and works with any JWT algorithm.
-    Optionally claims a guest_session_id's trips on first sign-in."""
+    """Exchange a Supabase access_token for a server-side session cookie."""
+    import traceback
+    try:
+        return await _auth_session_inner(request, response, body)
+    except HTTPException:
+        raise
+    except BaseException as e:
+        tb = traceback.format_exc()
+        logger.error(f"auth_session unhandled: {tb}")
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)[:400]}")
+
+
+async def _auth_session_inner(
+    request: Request,
+    response: Response,
+    body: Dict[str, Any],
+):
     access_token = body.get("access_token")
     guest_session_id = body.get("guest_session_id")
     if not access_token:
         raise HTTPException(status_code=400, detail="access_token required")
 
-    # Verify token by calling Supabase auth API.
-    # Use synchronous httpx — avoids async context manager issues on Vercel/Mangum.
+    # Verify token via Supabase /auth/v1/user.
+    # Using asyncio.to_thread so the sync httpx call doesn't block the event loop.
+    import asyncio
     try:
-        supa_resp = httpx.get(
+        supa_resp = await asyncio.to_thread(
+            httpx.get,
             f"{SUPABASE_URL}/auth/v1/user",
             headers={
                 "Authorization": f"Bearer {access_token}",
