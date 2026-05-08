@@ -1,6 +1,6 @@
 """Phase 4 — /api/chat/intake LLM extractor tests.
 
-Uses real gemini-2.5-flash via emergentintegrations. Each test makes 1 LLM call.
+Uses real gemini-2.5-flash via Google AI Studio. Each test makes 1 LLM call.
 """
 
 import os

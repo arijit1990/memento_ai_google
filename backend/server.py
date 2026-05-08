@@ -20,7 +20,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 # Fail fast with clear messages if required env vars are missing
-_REQUIRED_ENV = ["MONGO_URL", "DB_NAME", "EMERGENT_LLM_KEY"]
+_REQUIRED_ENV = ["MONGO_URL", "DB_NAME", "GOOGLE_AI_KEY"]
 for _key in _REQUIRED_ENV:
     if not os.environ.get(_key):
         raise RuntimeError(f"Required environment variable '{_key}' is not set. Check your .env file.")
@@ -30,7 +30,9 @@ mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
+GOOGLE_AI_KEY = os.environ.get("GOOGLE_AI_KEY")
+# ANTHROPIC_API_KEY is only needed if LLM_FALLBACK_PROVIDER=anthropic (optional)
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 # EMERGENT_AUTH_BASE is required — no hardcoded default so Vercel deployments are explicit
 EMERGENT_AUTH_BASE = os.environ.get("EMERGENT_AUTH_BASE")
 EXPORT_WEBHOOK_URL = os.environ.get("EXPORT_WEBHOOK_URL")
@@ -358,28 +360,50 @@ Rules:
 """
 
 
-async def call_llm(provider: str, model: str, intake: IntakeData) -> str:
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
-
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"trip-gen-{uuid.uuid4().hex[:8]}",
-        system_message=ITINERARY_SYSTEM_PROMPT,
-    ).with_model(provider, model)
-
-    user_msg = UserMessage(
-        text=(
-            f"Generate an itinerary for the following traveler intake.\n"
-            f"Destination: {intake.destination}\n"
-            f"Dates: {intake.dates}\n"
-            f"Group: {intake.group}\n"
-            f"Traveler type: {', '.join(intake.travelerType) if intake.travelerType else 'general'}\n"
-            f"Trip type: {intake.tripType}\n"
-            f"Budget: {intake.budget}\n\n"
-            f"Output ONLY the JSON. No markdown fences."
-        )
+async def _call_google(model: str, system_prompt: str, user_prompt: str) -> str:
+    from google import genai
+    from google.genai import types
+    g_client = genai.Client(api_key=GOOGLE_AI_KEY)
+    response = await g_client.aio.models.generate_content(
+        model=model,
+        contents=user_prompt,
+        config=types.GenerateContentConfig(system_instruction=system_prompt),
     )
-    return await chat.send_message(user_msg)
+    return response.text
+
+
+async def _call_anthropic(model: str, system_prompt: str, user_prompt: str) -> str:
+    import anthropic
+    a_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+    msg = await a_client.messages.create(
+        model=model,
+        max_tokens=8192,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+    return msg.content[0].text
+
+
+async def _call_provider(provider: str, model: str, system_prompt: str, user_prompt: str) -> str:
+    if provider == "gemini":
+        return await _call_google(model, system_prompt, user_prompt)
+    if provider == "anthropic":
+        return await _call_anthropic(model, system_prompt, user_prompt)
+    raise ValueError(f"Unknown LLM provider: {provider!r}")
+
+
+async def call_llm(provider: str, model: str, intake: IntakeData) -> str:
+    prompt = (
+        f"Generate an itinerary for the following traveler intake.\n"
+        f"Destination: {intake.destination}\n"
+        f"Dates: {intake.dates}\n"
+        f"Group: {intake.group}\n"
+        f"Traveler type: {', '.join(intake.travelerType) if intake.travelerType else 'general'}\n"
+        f"Trip type: {intake.tripType}\n"
+        f"Budget: {intake.budget}\n\n"
+        f"Output ONLY the JSON. No markdown fences."
+    )
+    return await _call_provider(provider, model, ITINERARY_SYSTEM_PROMPT, prompt)
 
 
 def extract_json(raw: str) -> Dict[str, Any]:
@@ -690,8 +714,6 @@ async def chat_intake(body: IntakeRequest):
     """Cheap LLM call to parse free-text chat into structured intake.
     Sends opening context (first 2 msgs) + recent messages (last 10) to preserve
     early destination intent while keeping token cost bounded."""
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
-
     msgs = body.messages
     # Keep first 2 messages (opening context) + last 10 (recent interaction)
     if len(msgs) > 12:
@@ -712,14 +734,11 @@ async def chat_intake(body: IntakeRequest):
         f"Return the updated intake JSON now."
     )
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"intake-{uuid.uuid4().hex[:8]}",
-        system_message=INTAKE_SYSTEM_PROMPT,
-    ).with_model(LLM_INTAKE_PROVIDER, LLM_INTAKE_MODEL)
-    user_msg = UserMessage(text=prompt)
     try:
-        raw = await asyncio.wait_for(chat.send_message(user_msg), timeout=20)
+        raw = await asyncio.wait_for(
+            _call_provider(LLM_INTAKE_PROVIDER, LLM_INTAKE_MODEL, INTAKE_SYSTEM_PROMPT, prompt),
+            timeout=20,
+        )
     except Exception as e:
         logging.exception("Intake LLM failed")
         raise HTTPException(status_code=503, detail=f"Intake LLM failed: {e}")
@@ -749,21 +768,12 @@ Rules:
 
 
 async def call_edit_llm(provider: str, model: str, trip: Dict[str, Any], message: str) -> str:
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
-
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"trip-edit-{uuid.uuid4().hex[:8]}",
-        system_message=EDIT_SYSTEM_PROMPT,
-    ).with_model(provider, model)
-    user_msg = UserMessage(
-        text=(
-            f"Current itinerary JSON:\n{json.dumps(trip)[:14000]}\n\n"
-            f"User's edit request: \"{message}\"\n\n"
-            f"Return the full updated JSON only."
-        )
+    prompt = (
+        f"Current itinerary JSON:\n{json.dumps(trip)[:14000]}\n\n"
+        f"User's edit request: \"{message}\"\n\n"
+        f"Return the full updated JSON only."
     )
-    return await chat.send_message(user_msg)
+    return await _call_provider(provider, model, EDIT_SYSTEM_PROMPT, prompt)
 
 
 @api_router.post("/trips/{trip_id}/edit")

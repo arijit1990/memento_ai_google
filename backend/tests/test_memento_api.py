@@ -130,7 +130,7 @@ def generated_trip(api):
 
 def test_generate_trip_status(generated_trip):
     if generated_trip.status_code == 503:
-        pytest.fail(f"LLM unavailable (likely budget exceeded on EMERGENT_LLM_KEY): {generated_trip.text[:300]}")
+        pytest.fail(f"LLM unavailable (check GOOGLE_AI_KEY quota): {generated_trip.text[:300]}")
     assert generated_trip.status_code == 200, generated_trip.text[:500]
 
 
