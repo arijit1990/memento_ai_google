@@ -37,6 +37,12 @@ export const AuthProvider = ({ children }) => {
     refresh();
   }, [refresh]);
 
+  // Expose setUser for demo automation (record_demo.js injects auth without a reload)
+  useEffect(() => {
+    window.__memento_force_user = setUser;
+    return () => { delete window.__memento_force_user; };
+  }, []);
+
   const signIn = useCallback(async () => {
     await supabase.auth.signInWithOAuth({
       provider: "google",

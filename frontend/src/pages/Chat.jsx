@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Plane, ArrowLeft, MessageCircle, Map } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 
 import { ChatThread } from "@/components/chat/ChatThread";
@@ -23,13 +23,27 @@ const THINKING_PHRASES = [
 
 const Chat = () => {
   const { user } = useAuth();
-  const [mode, setMode] = useState("chat"); // 'chat' | 'wizard'
+  const location = useLocation();
+  const locState = location.state || {};
+
+  const [mode, setMode] = useState(locState.destination ? "wizard" : "chat");
   const [messages, setMessages] = useState(SAMPLE_CHAT);
   const [showConfirm, setShowConfirm] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [trip, setTrip] = useState(null);
   const [confirmSummary, setConfirmSummary] = useState([]);
-  const [intake, setIntake] = useState({});
+  const [intake, setIntake] = useState(
+    locState.destination || locState.tripType || locState.group
+      ? {
+          destination: locState.destination || "",
+          dates: locState.dates || "",
+          group: locState.group || "2 adults",
+          travelerType: locState.travelerType || [],
+          tripType: locState.tripType || "City Break",
+          budget: "",
+        }
+      : {}
+  );
   const [editing, setEditing] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [thinkingLabel, setThinkingLabel] = useState(THINKING_PHRASES[0]);
@@ -40,6 +54,19 @@ const Chat = () => {
   useEffect(() => {
     if (!user) getGuestSessionId();
   }, [user]);
+
+  // When opened from /itinerary/:id via "Edit with AI", load the existing trip
+  useEffect(() => {
+    if (!locState.tripId || trip) return;
+    api.get(`/trips/${locState.tripId}`, {
+      params: user ? {} : { guest_session_id: getGuestSessionId() },
+    })
+      .then(r => {
+        setTrip(r.data);
+        setMobileView("itinerary");
+      })
+      .catch(() => {});
+  }, [locState.tripId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const buildSummary = (data) => [
     { label: "Destination", value: data.destination || "—" },
@@ -280,6 +307,7 @@ const Chat = () => {
           <IntakeWizard
             onComplete={handleWizardComplete}
             onSwitchToChat={() => setMode("chat")}
+            initialDestination={locState.destination || ""}
           />
         ) : (
           <ChatThread

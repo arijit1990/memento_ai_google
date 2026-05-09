@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Calendar, Users, Wallet, Share2, Download, Heart, Check, Mail, Send } from "lucide-react";
+import { Calendar, Users, Wallet, Share2, Download, Heart, Check, Mail, Send, PiggyBank } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -8,6 +8,7 @@ import { DayCard } from "./DayCard";
 import { SmartHacksStrip } from "./SmartHacksStrip";
 import { RealMap } from "./RealMap";
 import { useLivePrices } from "./ActivityCard";
+import { LivePricesPanel } from "./LivePricesPanel";
 import { ExportModal } from "./ExportModal";
 import { api, getGuestSessionId } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -54,6 +55,7 @@ export const ItineraryPanel = ({ trip, compact = false, onSave, readOnly = false
     <div
       className="flex-1 overflow-y-auto scrollbar-thin"
       data-testid="itinerary-panel"
+      data-trip-id={trip.id}
     >
       {/* Cover */}
       <div className="relative h-56 sm:h-72 overflow-hidden">
@@ -185,6 +187,57 @@ export const ItineraryPanel = ({ trip, compact = false, onSave, readOnly = false
         <div className="mb-10">
           <RealMap trip={trip} />
         </div>
+
+        {/* Budget breakdown */}
+        {trip.budgetBreakdown && (
+          <div className="mb-10 bg-white rounded-3xl border border-memento-parchment p-6" data-testid="budget-breakdown">
+            <div className="flex items-center gap-2 mb-5">
+              <PiggyBank className="w-4 h-4 text-memento-terracotta" />
+              <h3 className="text-xs uppercase tracking-[0.2em] font-bold text-memento-espresso">
+                Budget breakdown
+              </h3>
+              <span className="ml-auto text-sm font-semibold text-memento-terracotta">
+                {trip.budgetBreakdown.total}
+              </span>
+            </div>
+            <div className="space-y-2.5">
+              {[
+                { key: "accommodation", label: "Stays" },
+                { key: "food", label: "Food & drink" },
+                { key: "activities", label: "Activities" },
+                { key: "transport", label: "Transport" },
+                { key: "misc", label: "Misc" },
+              ].filter(({ key }) => trip.budgetBreakdown[key]).map(({ key, label }) => {
+                const val = trip.budgetBreakdown[key];
+                const pctMatch = val.match(/\((\d+)%\)/);
+                const pct = pctMatch ? parseInt(pctMatch[1]) : 0;
+                return (
+                  <div key={key} className="flex items-center gap-3">
+                    <span className="text-xs text-memento-coffee w-24 shrink-0">{label}</span>
+                    <div className="flex-1 h-1.5 bg-memento-sand rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-memento-terracotta rounded-full"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className="text-xs font-medium text-memento-espresso w-28 text-right shrink-0">
+                      {val}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            {trip.budgetBreakdown.savingsTip && (
+              <p className="mt-4 pt-4 border-t border-memento-parchment text-xs text-memento-coffee">
+                <span className="font-semibold text-memento-terracotta">Tip: </span>
+                {trip.budgetBreakdown.savingsTip}
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Live hotel & flight prices */}
+        <LivePricesPanel trip={trip} />
 
         {/* Smart hacks */}
         {trip.smartHacks && trip.smartHacks.length > 0 && (
