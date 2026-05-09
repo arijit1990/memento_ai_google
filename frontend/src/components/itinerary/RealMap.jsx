@@ -55,6 +55,7 @@ function createDivIcon(label) {
 export const RealMap = ({ trip }) => {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
+  const boundsRef = useRef([]); // kept in sync so ResizeObserver can re-fit
   const [status, setStatus] = useState("loading"); // "loading" | "ready" | "error"
 
   useEffect(() => {
@@ -100,6 +101,7 @@ export const RealMap = ({ trip }) => {
       if (bounds.length >= 2) {
         map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
       }
+      boundsRef.current = [...bounds];
 
       // Geocode activities that lack coordinates — add pins progressively
       const pinsWithout = allPins.filter((p) => !p.hasCoords);
@@ -113,6 +115,7 @@ export const RealMap = ({ trip }) => {
             .addTo(map)
             .bindPopup(`<div style="font-family:Outfit,sans-serif;font-size:12px;font-weight:600;color:#2D2823">${p.title}</div>`);
           bounds.push([geo.lat, geo.lng]);
+          boundsRef.current = [...bounds];
           if (bounds.length >= 2 && pinsWithCoords.length === 0) {
             map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
           }
@@ -163,14 +166,27 @@ export const RealMap = ({ trip }) => {
     };
   }, [trip]);
 
-  // Invalidate Leaflet size whenever the container is resized (e.g. chat panel collapses)
+  // Re-fit map whenever the container is resized (e.g. chat panel collapses/expands).
+  // Debounced at 350ms so it fires once after the 300ms CSS transition completes.
   useEffect(() => {
     if (!containerRef.current) return;
+    let timer = null;
     const observer = new ResizeObserver(() => {
-      if (mapRef.current) mapRef.current.invalidateSize();
+      if (!mapRef.current) return;
+      mapRef.current.invalidateSize();
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (!mapRef.current) return;
+        mapRef.current.invalidateSize();
+        if (boundsRef.current.length >= 2) {
+          mapRef.current.fitBounds(boundsRef.current, { padding: [40, 40], maxZoom: 14 });
+        } else if (boundsRef.current.length === 1) {
+          mapRef.current.setView(boundsRef.current[0], mapRef.current.getZoom());
+        }
+      }, 350);
     });
     observer.observe(containerRef.current);
-    return () => observer.disconnect();
+    return () => { observer.disconnect(); clearTimeout(timer); };
   }, []);
 
   return (
