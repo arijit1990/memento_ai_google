@@ -209,8 +209,8 @@ export const ItineraryPanel = ({ trip, compact = false, onSave, readOnly = false
                 { key: "misc", label: "Misc" },
               ].filter(({ key }) => trip.budgetBreakdown[key]).map(({ key, label }) => {
                 const val = trip.budgetBreakdown[key];
-                const pctMatch = val.match(/\((\d+)%\)/);
-                const pct = pctMatch ? parseInt(pctMatch[1]) : 0;
+                const pctMatch = val.match(/\((\d+(?:\.\d+)?)%\)/);
+                const pct = pctMatch ? parseFloat(pctMatch[1]) : 0;
                 return (
                   <div key={key} className="flex items-center gap-3">
                     <span className="text-xs text-memento-coffee w-24 shrink-0">{label}</span>
