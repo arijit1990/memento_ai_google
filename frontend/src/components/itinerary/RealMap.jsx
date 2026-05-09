@@ -1,126 +1,157 @@
-import { useEffect, useRef } from "react";
-import mapboxgl from "mapbox-gl";
-import "mapbox-gl/dist/mapbox-gl.css";
+import { useEffect, useRef, useState } from "react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 import { Map as MapIcon } from "lucide-react";
 
-const TOKEN = process.env.REACT_APP_MAPBOX_TOKEN;
-if (TOKEN) {
-  mapboxgl.accessToken = TOKEN;
-}
+// Fix default Leaflet icon path broken by webpack
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: require("leaflet/dist/images/marker-icon-2x.png"),
+  iconUrl: require("leaflet/dist/images/marker-icon.png"),
+  shadowUrl: require("leaflet/dist/images/marker-shadow.png"),
+});
 
 const buildPins = (trip) => {
   const pins = [];
   (trip.days || []).forEach((d, di) => {
     (d.activities || []).forEach((a, ai) => {
-      const lat = a.lat ?? a.latitude;
-      const lng = a.lng ?? a.longitude;
-      if (typeof lat === "number" && typeof lng === "number") {
-        pins.push({
-          id: a.id || `${di}-${ai}`,
-          lat,
-          lng,
-          label: `${di + 1}`,
-          title: a.title,
-        });
-      }
+      const lat = typeof a.lat === "number" ? a.lat : typeof a.latitude === "number" ? a.latitude : null;
+      const lng = typeof a.lng === "number" ? a.lng : typeof a.longitude === "number" ? a.longitude : null;
+      pins.push({
+        id: a.id || `${di}-${ai}`,
+        lat,
+        lng,
+        label: `${di + 1}`,
+        title: a.title || "",
+        location: a.location || "",
+        hasCoords: lat !== null && lng !== null,
+      });
     });
   });
   return pins;
 };
 
-async function geocodeDestination(destination) {
+async function nominatimGeocode(query) {
+  if (!query) return null;
   try {
-    const query = encodeURIComponent(destination);
-    const resp = await fetch(
-      `https://api.mapbox.com/geocoding/v5/mapbox.places/${query}.json?limit=1&types=place,region,country&access_token=${TOKEN}`
-    );
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`;
+    const resp = await fetch(url, { headers: { "Accept-Language": "en" } });
     const data = await resp.json();
-    const center = data?.features?.[0]?.center;
-    if (center) return { lng: center[0], lat: center[1] };
+    if (data && data[0]) return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
   } catch (_) {}
   return null;
+}
+
+function createDivIcon(label) {
+  return L.divIcon({
+    className: "",
+    html: `<div style="width:28px;height:28px;border-radius:50%;background:#C85A40;color:white;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;font-family:Outfit,sans-serif;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.3);cursor:pointer">${label}</div>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+    popupAnchor: [0, -16],
+  });
 }
 
 export const RealMap = ({ trip }) => {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
+  const [status, setStatus] = useState("loading"); // "loading" | "ready" | "error"
 
   useEffect(() => {
-    if (!TOKEN || !containerRef.current) return;
+    if (!containerRef.current) return;
     let cancelled = false;
 
-    const pins = buildPins(trip);
+    const allPins = buildPins(trip);
 
-    const initMap = (centerLng, centerLat, zoom = 11) => {
+    const initMap = async (centerLat, centerLng, zoom) => {
       if (cancelled || !containerRef.current) return;
+
+      // Destroy previous instance
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
       }
 
-      const map = new mapboxgl.Map({
-        container: containerRef.current,
-        style: "mapbox://styles/mapbox/light-v11",
-        center: [centerLng, centerLat],
+      const map = L.map(containerRef.current, {
+        center: [centerLat, centerLng],
         zoom,
-        attributionControl: false,
+        zoomControl: true,
+        attributionControl: true,
       });
       mapRef.current = map;
-      map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
-      map.addControl(new mapboxgl.AttributionControl({ compact: true }));
 
-      const bounds = new mapboxgl.LngLatBounds();
-      pins.forEach((p) => {
-        const el = document.createElement("div");
-        el.className =
-          "memento-marker w-7 h-7 rounded-full bg-[#C85A40] text-white flex items-center justify-center text-xs font-bold shadow-md border-2 border-white cursor-pointer";
-        el.style.fontFamily = "Outfit, sans-serif";
-        el.textContent = p.label;
-        const popup = new mapboxgl.Popup({ offset: 18, closeButton: false }).setHTML(
-          `<div style="font-family:Outfit,sans-serif;font-size:12px;color:#2D2823;padding:2px 4px;">
-             <div style="font-weight:600;">${p.title || ""}</div>
-           </div>`
-        );
-        new mapboxgl.Marker({ element: el })
-          .setLngLat([p.lng, p.lat])
-          .setPopup(popup)
-          .addTo(map);
-        bounds.extend([p.lng, p.lat]);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 19,
+      }).addTo(map);
+
+      setStatus("ready");
+
+      // Add pins that already have coordinates
+      const bounds = [];
+      const pinsWithCoords = allPins.filter((p) => p.hasCoords);
+      pinsWithCoords.forEach((p) => {
+        L.marker([p.lat, p.lng], { icon: createDivIcon(p.label) })
+          .addTo(map)
+          .bindPopup(`<div style="font-family:Outfit,sans-serif;font-size:12px;font-weight:600;color:#2D2823">${p.title}</div>`);
+        bounds.push([p.lat, p.lng]);
       });
 
-      if (pins.length >= 2) {
-        map.fitBounds(bounds, { padding: 60, maxZoom: 13.5, duration: 0 });
+      if (bounds.length >= 2) {
+        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
+      }
+
+      // Geocode activities that lack coordinates — add pins progressively
+      const pinsWithout = allPins.filter((p) => !p.hasCoords);
+      for (const p of pinsWithout) {
+        if (cancelled) break;
+        const query = [p.title, p.location, trip.destination].filter(Boolean).join(", ");
+        const geo = await nominatimGeocode(query);
+        if (cancelled) break;
+        if (geo) {
+          L.marker([geo.lat, geo.lng], { icon: createDivIcon(p.label) })
+            .addTo(map)
+            .bindPopup(`<div style="font-family:Outfit,sans-serif;font-size:12px;font-weight:600;color:#2D2823">${p.title}</div>`);
+          bounds.push([geo.lat, geo.lng]);
+          if (bounds.length >= 2 && pinsWithCoords.length === 0) {
+            map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
+          }
+        }
+        // Small delay to respect Nominatim's usage policy
+        await new Promise((r) => setTimeout(r, 300));
       }
     };
 
     (async () => {
-      let centerLng, centerLat, zoom;
+      let centerLat, centerLng, zoom;
 
-      if (trip.centerLat && trip.centerLng) {
-        centerLng = trip.centerLng;
-        centerLat = trip.centerLat;
-        zoom = 11;
-      } else if (pins.length > 0) {
-        centerLng = pins[0].lng;
-        centerLat = pins[0].lat;
-        zoom = 11.5;
+      const cLat = typeof trip.centerLat === "number" ? trip.centerLat : parseFloat(trip.centerLat);
+      const cLng = typeof trip.centerLng === "number" ? trip.centerLng : parseFloat(trip.centerLng);
+
+      if (!isNaN(cLat) && !isNaN(cLng) && (cLat !== 0 || cLng !== 0)) {
+        centerLat = cLat;
+        centerLng = cLng;
+        zoom = 12;
+      } else if (allPins.some((p) => p.hasCoords)) {
+        const first = allPins.find((p) => p.hasCoords);
+        centerLat = first.lat;
+        centerLng = first.lng;
+        zoom = 12;
       } else {
-        // No coordinates at all — geocode the destination name
-        const geo = await geocodeDestination(trip.destination || "");
+        const geo = await nominatimGeocode(trip.destination || "");
         if (cancelled) return;
         if (geo) {
-          centerLng = geo.lng;
           centerLat = geo.lat;
-          zoom = 10;
+          centerLng = geo.lng;
+          zoom = 12;
         } else {
-          // Final fallback: world view
-          centerLng = 20;
           centerLat = 20;
+          centerLng = 0;
           zoom = 2;
         }
       }
 
-      initMap(centerLng, centerLat, zoom);
+      await initMap(centerLat, centerLng, zoom);
     })();
 
     return () => {
@@ -132,25 +163,18 @@ export const RealMap = ({ trip }) => {
     };
   }, [trip]);
 
-  if (!TOKEN) {
-    return (
-      <div
-        className="relative w-full aspect-[16/9] rounded-3xl overflow-hidden border border-memento-parchment bg-memento-sand flex items-center justify-center"
-        data-testid="map-no-token"
-      >
-        <p className="text-sm text-memento-coffee italic">
-          Map unavailable — set REACT_APP_MAPBOX_TOKEN
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div
-      className="relative w-full aspect-[16/9] rounded-3xl overflow-hidden border border-memento-parchment bg-memento-sand"
+      className="relative w-full rounded-3xl overflow-hidden border border-memento-parchment bg-memento-sand"
+      style={{ height: "320px" }}
       data-testid="real-map"
     >
-      <div ref={containerRef} className="absolute inset-0" />
+      <div ref={containerRef} style={{ position: "absolute", inset: 0, zIndex: 0 }} />
+      {status === "loading" && (
+        <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+          <p className="text-xs text-memento-coffee italic">Loading map…</p>
+        </div>
+      )}
       <div className="absolute bottom-3 left-3 z-10 bg-white/95 backdrop-blur-sm px-3 py-1.5 rounded-full text-xs text-memento-espresso flex items-center gap-1.5 shadow-sm pointer-events-none">
         <MapIcon className="w-3.5 h-3.5" />
         {trip.destination}

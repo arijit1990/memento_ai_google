@@ -10,18 +10,21 @@ const COLLECTIONS = [
     sub: "3-day itineraries built for unwinding",
     image:
       "https://images.unsplash.com/photo-1493707553966-283afac8c358?auto=format&fit=crop&w=1200&q=80",
+    state: { destination: "Europe", tripType: "City Break", dates: "Long weekend" },
   },
   {
     title: "Honeymoons that aren't beaches",
     sub: "Romance, with a sense of place",
     image:
       "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?auto=format&fit=crop&w=1200&q=80",
+    state: { tripType: "Honeymoon", travelerType: ["Luxury Traveller"] },
   },
   {
     title: "Solo trips for introverts",
     sub: "Quiet cities, slow rhythms",
     image:
       "https://images.unsplash.com/photo-1500835556837-99ac94a94552?auto=format&fit=crop&w=1200&q=80",
+    state: { group: "Solo", travelerType: ["Explorer"] },
   },
 ];
 
@@ -76,6 +79,7 @@ const Explore = () => {
             <Link
               key={d.name}
               to="/chat"
+              state={{ destination: `${d.name}, ${d.country}` }}
               data-testid={`explore-destination-${d.name.toLowerCase()}`}
               className="group block animate-float-up"
               style={{ animationDelay: `${i * 40}ms` }}
@@ -118,6 +122,7 @@ const Explore = () => {
             <Link
               key={c.title}
               to="/chat"
+              state={c.state || {}}
               data-testid={`explore-collection-${i}`}
               className="group relative aspect-[4/5] rounded-3xl overflow-hidden block bg-memento-espresso"
             >

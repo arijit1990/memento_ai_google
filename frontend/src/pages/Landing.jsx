@@ -184,6 +184,7 @@ const Landing = () => {
               <Link
                 key={d.name}
                 to="/chat"
+                state={{ destination: `${d.name}, ${d.country}` }}
                 data-testid={`landing-destination-${d.name.toLowerCase()}`}
                 className="group relative aspect-[3/4] rounded-2xl overflow-hidden bg-memento-espresso block"
               >

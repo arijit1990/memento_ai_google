@@ -29,12 +29,26 @@ SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
 GOOGLE_AI_KEY = os.environ.get("GOOGLE_AI_KEY")
+
+# Additional Google AI keys for rate-limit rotation (GOOGLE_AI_KEY_2 … GOOGLE_AI_KEY_5)
+_GOOGLE_AI_KEYS: list[str] = [k for k in [
+    GOOGLE_AI_KEY,
+    os.environ.get("GOOGLE_AI_KEY_2"),
+    os.environ.get("GOOGLE_AI_KEY_3"),
+    os.environ.get("GOOGLE_AI_KEY_4"),
+    os.environ.get("GOOGLE_AI_KEY_5"),
+] if k]
 # Provider keys — only needed when the corresponding provider is active
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 # Supabase JWT secret — used to verify user tokens locally (no outbound HTTP call)
 SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET")
 EXPORT_WEBHOOK_URL = os.environ.get("EXPORT_WEBHOOK_URL")
+SERPAPI_KEY = os.environ.get("SERPAPI_KEY")
+_SERPAPI_KEYS: list[str] = [k for k in [
+    SERPAPI_KEY,
+    os.environ.get("SERPAPI_KEY_2"),
+] if k]
 FRONTEND_BASE_URL = os.environ.get("FRONTEND_BASE_URL", "http://localhost:3000").rstrip("/")
 
 # CORS — collect all allowed origins from env vars.
@@ -418,6 +432,27 @@ async def claim_guest(
     return {"claimed": len(r.data)}
 
 
+# ---------------------------- Geocoding helpers ----------------------------
+
+async def _nominatim_geocode(query: str):
+    """Return (lat, lng) from Nominatim, or None on failure."""
+    if not query:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=8) as hx:
+            r = await hx.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"q": query, "format": "json", "limit": "1"},
+                headers={"User-Agent": "memento-travel-app/1.0"},
+            )
+            data = r.json()
+            if data:
+                return float(data[0]["lat"]), float(data[0]["lon"])
+    except Exception:
+        pass
+    return None
+
+
 # ---------------------------- Trip generation (LLM) ----------------------------
 
 ITINERARY_SYSTEM_PROMPT = """You are Memento — an expert travel planner that handcrafts personalized itineraries for travelers.
@@ -441,6 +476,15 @@ Output ONLY valid minified JSON matching this exact schema (no markdown, no comm
   "summary": "string — 2–3 sentence summary",
   "centerLat": number,
   "centerLng": number,
+  "budgetBreakdown": {
+    "accommodation": "string — e.g. '$800 (32%)'",
+    "food": "string — e.g. '$400 (16%)'",
+    "activities": "string — e.g. '$300 (12%)'",
+    "transport": "string — e.g. '$500 (20%)'",
+    "misc": "string — e.g. '$500 (20%)'",
+    "total": "string — e.g. '$2,500'",
+    "savingsTip": "string — one concrete money-saving tip for this destination"
+  },
   "smartHacks": [
     {"id": "hack-1", "title": "string", "saves": "Saves $X / Saves N hours", "detail": "string", "type": "money|time"}
   ],
@@ -470,13 +514,17 @@ Output ONLY valid minified JSON matching this exact schema (no markdown, no comm
 }
 
 Rules:
+- All trip dates MUST be after today's date (provided in the user prompt)
 - Generate 3–7 activities per day depending on trip pace
+- ALWAYS include realistic numeric lat/lng for EVERY activity and for centerLat/centerLng — never null, never 0,0
 - Include realistic addresses and accurate latitude/longitude for the destination
 - Smart hacks: 3–5 items, mix of money & time savers, specific to the destination
 - Use real, well-known venues. No made-up names
 - Activity icons: 'bed' for hotels, 'utensils' for dinner, 'coffee' for breakfast/cafes, 'landmark' for sights/museums, 'train'/'plane' for transit, 'wine' for fine dining, 'mountain' for hikes, 'footprints' for walks, 'salad' for picnics/light lunch
 - Currency in USD unless trip is in a USD-hostile country
-- Respect the budget input — adjust hotel tier, dining cost
+- STRICTLY respect the budget: if budget is "Under $1k" choose budget accommodation and free/cheap activities; if "$1k–$2.5k" use mid-range; if "$5k+" allow luxury
+- Always include at least one free or very cheap activity per day as a budget-friendly alternative
+- budgetBreakdown must reflect realistic spend at the given budget tier — total must match or be under the stated budget
 - Match traveler types to activity selection
 """
 
@@ -484,13 +532,25 @@ Rules:
 async def _call_google(model: str, system_prompt: str, user_prompt: str) -> str:
     from google import genai
     from google.genai import types
-    g_client = genai.Client(api_key=GOOGLE_AI_KEY)
-    response = await g_client.aio.models.generate_content(
-        model=model,
-        contents=user_prompt,
-        config=types.GenerateContentConfig(system_instruction=system_prompt),
-    )
-    return response.text
+    last_err = None
+    for key in _GOOGLE_AI_KEYS:
+        try:
+            g_client = genai.Client(api_key=key)
+            response = await g_client.aio.models.generate_content(
+                model=model,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(system_instruction=system_prompt),
+            )
+            return response.text
+        except Exception as e:
+            err_str = str(e).lower()
+            # Rotate to next key on rate limit or quota errors; re-raise anything else
+            if any(x in err_str for x in ("429", "quota", "rate", "resource_exhausted")):
+                logging.warning("Google AI key rotated due to rate limit: %s", str(e)[:120])
+                last_err = e
+                continue
+            raise
+    raise last_err or RuntimeError("All Google AI keys exhausted")
 
 
 async def _call_anthropic(model: str, system_prompt: str, user_prompt: str) -> str:
@@ -530,7 +590,9 @@ async def _call_provider(provider: str, model: str, system_prompt: str, user_pro
 
 
 async def call_llm(provider: str, model: str, intake: IntakeData) -> str:
+    today_str = datetime.now(timezone.utc).strftime("%B %d, %Y")
     prompt = (
+        f"Today's date: {today_str}. All generated trip dates MUST be strictly in the future.\n\n"
         f"Generate an itinerary for the following traveler intake.\n"
         f"Destination: {intake.destination}\n"
         f"Dates: {intake.dates}\n"
@@ -601,6 +663,12 @@ async def generate_trip(
         logging.error("JSON parse failed. Raw output:\n%s", raw[:2000])
         raise HTTPException(status_code=502, detail=f"LLM returned malformed JSON: {e}")
 
+    # Fill in centerLat/centerLng if LLM omitted them
+    if not isinstance(trip_json.get("centerLat"), (int, float)) or not isinstance(trip_json.get("centerLng"), (int, float)):
+        geo = await _nominatim_geocode(trip_json.get("destination") or body.intake.destination or "")
+        if geo:
+            trip_json["centerLat"], trip_json["centerLng"] = geo
+
     trip_id = f"trip-{uuid.uuid4().hex[:10]}"
 
     doc = {
@@ -662,12 +730,17 @@ async def generate_trip_stream(
             idx = 0
             timed_out = False
             try:
+                last_ping = start
                 while not task.done():
                     await asyncio.sleep(0.6)
                     elapsed = asyncio.get_running_loop().time() - start
                     if idx < len(timed_statuses) and elapsed >= timed_statuses[idx][0]:
                         yield evt({"type": "status", "message": timed_statuses[idx][1]})
                         idx += 1
+                        last_ping = asyncio.get_running_loop().time()
+                    elif asyncio.get_running_loop().time() - last_ping >= 15:
+                        yield ": keepalive\n\n"
+                        last_ping = asyncio.get_running_loop().time()
                     if elapsed > 90:
                         timed_out = True
                         task.cancel()
@@ -707,6 +780,12 @@ async def generate_trip_stream(
         except Exception as e:
             yield evt({"type": "error", "detail": f"Malformed LLM output: {e}"})
             return
+
+        # Fill in centerLat/centerLng if LLM omitted them
+        if not isinstance(trip_json.get("centerLat"), (int, float)) or not isinstance(trip_json.get("centerLng"), (int, float)):
+            geo = await _nominatim_geocode(trip_json.get("destination") or intake.destination or "")
+            if geo:
+                trip_json["centerLat"], trip_json["centerLng"] = geo
 
         trip_id = f"trip-{uuid.uuid4().hex[:10]}"
         doc = {
@@ -821,7 +900,7 @@ You must respond with ONLY valid JSON (no markdown fences, no commentary) matchi
 {
   "intake": {
     "destination": "string — city/region/country, cleanly formatted (e.g. 'Amalfi Coast' not 'a trip to the Amalfi Coast'). Empty string if unknown.",
-    "dates": "string — natural date phrase (e.g. 'mid April 2026', 'next October', 'a week in spring'). 'Flexible' if unknown.",
+    "dates": "string — natural date phrase always in the future (e.g. 'mid June 2026', 'next October', 'a week in spring 2027'). 'Flexible' if unknown. Never generate past dates.",
     "group": "string — one of: 'Solo' | '2 adults' | 'Family with kids' | 'Friends (3-5)' | 'Friends (6+)'. Empty string if unknown.",
     "travelerType": ["array of: 'Explorer' | 'Food Lover' | 'Culture Seeker' | 'Adventure Seeker' | 'Wellness Traveller' | 'Luxury Traveller' | 'Party Animal'. Empty array if unknown."],
     "tripType": "string — one of: 'City Break' | 'Beach & Relaxation' | 'Honeymoon' | 'Road Trip' | 'Adventure' | 'Wellness Retreat' | 'Family Reunion' | 'Cruise' | 'Ski & Snow' | 'General Leisure'. Default 'City Break' if unclear.",
@@ -866,7 +945,9 @@ async def chat_intake(body: IntakeRequest):
         convo_lines.append(f"{prefix}: {m.get('content', '')[:800]}")
     convo_text = "\n".join(convo_lines)
 
+    today_str = datetime.now(timezone.utc).strftime("%B %d, %Y")
     prompt = (
+        f"Today's date: {today_str}. All dates extracted must be in the future.\n\n"
         f"Conversation so far:\n{convo_text}\n\n"
         f"Current intake state: {json.dumps(body.current_intake or {})}\n\n"
         f"Return the updated intake JSON now."
@@ -1180,6 +1261,265 @@ async def booking_prices(ids: str):
             continue
         out[aid] = _mock_price(aid)
     return {"prices": out}
+
+
+# ---------------------------- Live prices (SerpAPI) ----------------------------
+
+# Destination name → primary IATA code for flight searches
+_CITY_IATA: Dict[str, str] = {
+    # East Asia
+    "tokyo": "NRT", "japan": "NRT", "kyoto": "KIX", "osaka": "KIX", "nagoya": "NGO",
+    "seoul": "ICN", "south korea": "ICN", "korea": "ICN",
+    "beijing": "PEK", "shanghai": "PVG", "china": "PVG", "hong kong": "HKG",
+    "taipei": "TPE", "taiwan": "TPE",
+    # Southeast Asia
+    "bali": "DPS", "jakarta": "CGK", "indonesia": "CGK",
+    "bangkok": "BKK", "thailand": "BKK", "phuket": "HKT", "chiang mai": "CNX",
+    "singapore": "SIN",
+    "kuala lumpur": "KUL", "malaysia": "KUL",
+    "manila": "MNL", "philippines": "MNL",
+    "ho chi minh": "SGN", "hanoi": "HAN", "vietnam": "SGN",
+    # South Asia
+    "mumbai": "BOM", "bombay": "BOM",
+    "delhi": "DEL", "new delhi": "DEL", "india": "DEL",
+    "bangalore": "BLR", "bengaluru": "BLR",
+    "chennai": "MAA", "madras": "MAA",
+    "kolkata": "CCU", "calcutta": "CCU",
+    "hyderabad": "HYD",
+    "ahmedabad": "AMD",
+    "kochi": "COK", "cochin": "COK", "kerala": "COK",
+    "goa": "GOI",
+    "pune": "PNQ",
+    "colombo": "CMB", "sri lanka": "CMB",
+    "dhaka": "DAC", "bangladesh": "DAC",
+    "kathmandu": "KTM", "nepal": "KTM",
+    "karachi": "KHI", "lahore": "LHE", "pakistan": "KHI",
+    "islamabad": "ISB",
+    # Middle East
+    "dubai": "DXB", "uae": "DXB", "united arab emirates": "DXB",
+    "abu dhabi": "AUH",
+    "doha": "DOH", "qatar": "DOH",
+    "riyadh": "RUH", "saudi arabia": "RUH", "jeddah": "JED",
+    "kuwait": "KWI",
+    "bahrain": "BAH",
+    "muscat": "MCT", "oman": "MCT",
+    "tel aviv": "TLV", "israel": "TLV",
+    "amman": "AMM", "jordan": "AMM",
+    # Europe
+    "london": "LHR", "uk": "LHR", "united kingdom": "LHR", "england": "LHR",
+    "paris": "CDG", "france": "CDG",
+    "amsterdam": "AMS", "netherlands": "AMS",
+    "frankfurt": "FRA", "germany": "FRA", "berlin": "BER", "munich": "MUC",
+    "rome": "FCO", "italy": "FCO", "milan": "MXP", "venice": "VCE",
+    "madrid": "MAD", "spain": "MAD", "barcelona": "BCN",
+    "lisbon": "LIS", "portugal": "LIS",
+    "zurich": "ZRH", "switzerland": "ZRH", "geneva": "GVA",
+    "vienna": "VIE", "austria": "VIE",
+    "brussels": "BRU", "belgium": "BRU",
+    "dublin": "DUB", "ireland": "DUB",
+    "edinburgh": "EDI", "scotland": "EDI", "glasgow": "GLA",
+    "copenhagen": "CPH", "denmark": "CPH",
+    "stockholm": "ARN", "sweden": "ARN",
+    "oslo": "OSL", "norway": "OSL",
+    "helsinki": "HEL", "finland": "HEL",
+    "athens": "ATH", "greece": "ATH", "santorini": "JTR",
+    "prague": "PRG", "czech": "PRG",
+    "warsaw": "WAW", "poland": "WAW",
+    "budapest": "BUD", "hungary": "BUD",
+    "bucharest": "OTP", "romania": "OTP",
+    "istanbul": "IST", "turkey": "IST",
+    "reykjavik": "KEF", "iceland": "KEF",
+    "marrakech": "RAK", "morocco": "RAK", "casablanca": "CMN",
+    "milan": "MXP", "florence": "FLR", "naples": "NAP", "amalfi coast": "NAP",
+    # Americas
+    "new york": "JFK", "nyc": "JFK", "new york city": "JFK",
+    "los angeles": "LAX", "la": "LAX", "usa": "JFK", "united states": "JFK",
+    "miami": "MIA", "chicago": "ORD", "san francisco": "SFO",
+    "toronto": "YYZ", "canada": "YYZ", "vancouver": "YVR", "montreal": "YUL",
+    "mexico city": "MEX", "cancun": "CUN", "mexico": "MEX",
+    "buenos aires": "EZE", "argentina": "EZE",
+    "rio de janeiro": "GIG", "sao paulo": "GRU", "brazil": "GRU",
+    "bogota": "BOG", "colombia": "BOG",
+    "lima": "LIM", "peru": "LIM",
+    # Africa & Oceania
+    "cairo": "CAI", "egypt": "CAI",
+    "nairobi": "NBO", "kenya": "NBO",
+    "cape town": "CPT", "johannesburg": "JNB", "south africa": "JNB",
+    "lagos": "LOS", "nigeria": "LOS",
+    "accra": "ACC", "ghana": "ACC",
+    "sydney": "SYD", "melbourne": "MEL", "australia": "SYD",
+    "auckland": "AKL", "new zealand": "AKL",
+    # Island destinations
+    "maldives": "MLE",
+    "mauritius": "MRU",
+    "seychelles": "SEZ",
+    "zanzibar": "ZNZ",
+}
+
+
+def _destination_to_iata(destination: str) -> Optional[str]:
+    dest_lower = destination.lower()
+    # Prefer the longest matching key (most specific wins: "bangalore" > "india")
+    best_key, best_code = "", None
+    for key, code in _CITY_IATA.items():
+        if key in dest_lower and len(key) > len(best_key):
+            best_key, best_code = key, code
+    if best_code:
+        return best_code
+    # If input already looks like an IATA code
+    stripped = dest_lower.strip().upper()
+    if len(stripped) == 3 and stripped.isalpha():
+        return stripped
+    return None
+
+
+def _parse_serpapi_date(date_str: str) -> Optional[str]:
+    """Convert 'May 15, 2026' or 'May 15 2026' → '2026-05-15'."""
+    if not date_str:
+        return None
+    from datetime import date as dt_date
+    import calendar
+    months = {m: i for i, m in enumerate(calendar.month_abbr) if m}
+    months.update({m: i for i, m in enumerate(calendar.month_name) if m})
+    # strip day suffix (st/nd/rd/th) and commas
+    clean = date_str.replace(",", " ").strip()
+    parts = clean.split()
+    if len(parts) >= 3:
+        try:
+            mon = months.get(parts[0][:3].capitalize())
+            day = int("".join(c for c in parts[1] if c.isdigit()))
+            year = int(parts[2])
+            if mon and 1 <= day <= 31 and year >= 2025:
+                return f"{year:04d}-{mon:02d}-{day:02d}"
+        except (ValueError, TypeError):
+            pass
+    return None
+
+
+@api_router.get("/airports/detect")
+async def airports_detect(city: str = "", country: str = ""):
+    """Return the nearest international airport IATA code for a given city/country."""
+    iata = _destination_to_iata(f"{city} {country}") or _destination_to_iata(city) or _destination_to_iata(country)
+    return {"iata": iata, "city": city, "country": country}
+
+
+@api_router.get("/prices/hotels")
+async def prices_hotels(destination: str, check_in: str, check_out: str, adults: int = 2):
+    """Fetch live hotel prices from Google Hotels via SerpAPI."""
+    if not _SERPAPI_KEYS:
+        raise HTTPException(status_code=503, detail="SERPAPI_KEY not configured")
+    data = None
+    for key in _SERPAPI_KEYS:
+        try:
+            async with httpx.AsyncClient(timeout=20) as hx:
+                r = await hx.get(
+                    "https://serpapi.com/search.json",
+                    params={
+                        "engine": "google_hotels",
+                        "q": destination,
+                        "check_in_date": check_in,
+                        "check_out_date": check_out,
+                        "adults": adults,
+                        "currency": "USD",
+                        "api_key": key,
+                    },
+                )
+            data = r.json()
+            if "error" in data and "plan" in data["error"].lower():
+                logging.warning("SerpAPI key rotated (hotels): %s", data["error"][:80])
+                data = None
+                continue
+            break
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"SerpAPI error: {e}")
+    if data is None:
+        return {"hotels": [], "error": "SerpAPI quota exceeded on all keys"}
+
+    if "error" in data:
+        return {"hotels": [], "error": data["error"]}
+
+    props = data.get("properties", [])[:6]
+    hotels = []
+    for p in props:
+        hotels.append({
+            "name": p.get("name"),
+            "price_per_night": p.get("rate_per_night", {}).get("lowest"),
+            "total_price": p.get("total_rate", {}).get("lowest"),
+            "rating": p.get("overall_rating"),
+            "reviews": p.get("reviews"),
+            "stars": p.get("hotel_class", ""),
+            "link": p.get("link"),
+            "thumbnail": (p.get("images") or [{}])[0].get("thumbnail"),
+            "amenities": (p.get("amenities") or [])[:4],
+        })
+    return {"hotels": hotels}
+
+
+@api_router.get("/prices/flights")
+async def prices_flights(
+    origin: str,
+    destination: str,
+    outbound_date: str,
+    return_date: Optional[str] = None,
+    adults: int = 1,
+):
+    """Fetch live flight prices from Google Flights via SerpAPI."""
+    if not _SERPAPI_KEYS:
+        raise HTTPException(status_code=503, detail="SERPAPI_KEY not configured")
+
+    arrival_iata = _destination_to_iata(destination) or destination.upper()[:3]
+    departure_iata = origin.upper().strip()
+
+    data = None
+    for key in _SERPAPI_KEYS:
+        params: Dict[str, Any] = {
+            "engine": "google_flights",
+            "departure_id": departure_iata,
+            "arrival_id": arrival_iata,
+            "outbound_date": outbound_date,
+            "adults": adults,
+            "currency": "USD",
+            "api_key": key,
+        }
+        if return_date:
+            params["return_date"] = return_date
+        try:
+            async with httpx.AsyncClient(timeout=25) as hx:
+                r = await hx.get("https://serpapi.com/search.json", params=params)
+            data = r.json()
+            if "error" in data and "plan" in data["error"].lower():
+                logging.warning("SerpAPI key rotated (flights): %s", data["error"][:80])
+                data = None
+                continue
+            break
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"SerpAPI error: {e}")
+    if data is None:
+        return {"flights": [], "error": "SerpAPI quota exceeded on all keys", "arrival_iata": arrival_iata}
+
+    if "error" in data and not data.get("best_flights"):
+        return {"flights": [], "error": data["error"], "arrival_iata": arrival_iata}
+
+    best = data.get("best_flights", [])[:5]
+    flights = []
+    for f in best:
+        legs = f.get("flights", [])
+        if not legs:
+            continue
+        first_leg = legs[0]
+        last_leg = legs[-1]
+        flights.append({
+            "price": f.get("price"),
+            "airline": first_leg.get("airline"),
+            "airline_logo": first_leg.get("airline_logo"),
+            "duration_min": f.get("total_duration"),
+            "stops": len(f.get("layovers", [])),
+            "departs": first_leg.get("departure_airport", {}).get("time", ""),
+            "arrives": last_leg.get("arrival_airport", {}).get("time", ""),
+            "booking_token": f.get("departure_token"),
+        })
+
+    return {"flights": flights, "arrival_iata": arrival_iata}
 
 
 # ---------------------------- App wiring ----------------------------

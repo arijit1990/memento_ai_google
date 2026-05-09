@@ -1,28 +1,78 @@
 import { useState } from "react";
-import { ArrowRight, ArrowLeft, Calendar, Users, Wallet, MapPin } from "lucide-react";
+import { ArrowRight, ArrowLeft, Users, Wallet, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Calendar } from "@/components/ui/calendar";
 import { TRAVELER_TYPES, TRIP_TYPES } from "@/lib/mockData";
+import { format, addDays, nextSaturday, nextFriday } from "date-fns";
 
 const STEPS = [
   { key: "destination", title: "Where to?", subtitle: "A city, a country, or just a vibe." },
-  { key: "dates", title: "When?", subtitle: "Approximate is fine." },
+  { key: "dates", title: "When?", subtitle: "Pick dates — they'll always be in the future." },
   { key: "group", title: "Who's coming?", subtitle: "We'll tune the pace." },
   { key: "travelerType", title: "How do you travel?", subtitle: "Pick all that feel right." },
   { key: "tripType", title: "What kind of trip?", subtitle: "Just one." },
-  { key: "budget", title: "Budget range?", subtitle: "Per person, total." },
+  { key: "budget", title: "Budget range?", subtitle: "Per person, total. We'll optimise every dollar." },
 ];
 
-export const IntakeWizard = ({ onComplete, onSwitchToChat }) => {
-  const [step, setStep] = useState(0);
+const fmtDate = (d) => format(d, "MMM d, yyyy");
+
+const fmtRange = (from, to) => {
+  if (!from) return "";
+  if (!to) return fmtDate(from);
+  return `${format(from, "MMM d")} – ${format(to, "MMM d, yyyy")}`;
+};
+
+const DURATION_CHIPS = [
+  {
+    label: "Weekend",
+    getDates: () => {
+      const sat = nextSaturday(new Date());
+      return { from: sat, to: addDays(sat, 1) };
+    },
+  },
+  {
+    label: "Long weekend",
+    getDates: () => {
+      const fri = nextFriday(new Date());
+      return { from: fri, to: addDays(fri, 3) };
+    },
+  },
+  {
+    label: "1 week",
+    getDates: () => {
+      const start = addDays(new Date(), 14);
+      return { from: start, to: addDays(start, 6) };
+    },
+  },
+  {
+    label: "2 weeks",
+    getDates: () => {
+      const start = addDays(new Date(), 14);
+      return { from: start, to: addDays(start, 13) };
+    },
+  },
+  {
+    label: "3+ weeks",
+    getDates: () => {
+      const start = addDays(new Date(), 14);
+      return { from: start, to: addDays(start, 20) };
+    },
+  },
+  { label: "Flexible", getDates: () => null },
+];
+
+export const IntakeWizard = ({ onComplete, onSwitchToChat, initialDestination = "" }) => {
+  const [step, setStep] = useState(initialDestination ? 1 : 0);
   const [data, setData] = useState({
-    destination: "Paris, France",
-    dates: "Apr 12 – 16, 2026",
+    destination: initialDestination || "",
+    dates: "",
     group: "2 adults",
-    travelerType: ["Culture Seeker", "Food Lover"],
+    travelerType: [],
     tripType: "City Break",
     budget: "$2,500 – $3,500",
   });
+  const [dateRange, setDateRange] = useState({ from: undefined, to: undefined });
 
   const current = STEPS[step];
   const progress = ((step + 1) / STEPS.length) * 100;
@@ -39,6 +89,26 @@ export const IntakeWizard = ({ onComplete, onSwitchToChat }) => {
       : [...data.travelerType, val];
     setData({ ...data, travelerType: arr });
   };
+
+  const handleRangeSelect = (range) => {
+    setDateRange(range || {});
+    if (range?.from) {
+      setData({ ...data, dates: fmtRange(range.from, range.to) });
+    }
+  };
+
+  const handleDurationChip = (chip) => {
+    const range = chip.getDates();
+    if (!range) {
+      setDateRange({});
+      setData({ ...data, dates: "Flexible" });
+    } else {
+      setDateRange(range);
+      setData({ ...data, dates: fmtRange(range.from, range.to) });
+    }
+  };
+
+  const today = new Date();
 
   return (
     <div className="flex flex-col h-full" data-testid="intake-wizard">
@@ -79,39 +149,59 @@ export const IntakeWizard = ({ onComplete, onSwitchToChat }) => {
               <Input
                 data-testid="wizard-destination-input"
                 value={data.destination}
-                onChange={(e) =>
-                  setData({ ...data, destination: e.target.value })
-                }
+                onChange={(e) => setData({ ...data, destination: e.target.value })}
                 placeholder="e.g., Paris, Tokyo, Bali..."
                 className="pl-11 h-14 rounded-2xl border-memento-parchment bg-white text-base"
               />
             </div>
           )}
 
-          {/* DATES */}
+          {/* DATES — calendar range picker */}
           {current.key === "dates" && (
-            <div className="relative">
-              <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-memento-coffee" />
-              <Input
-                data-testid="wizard-dates-input"
-                value={data.dates}
-                onChange={(e) => setData({ ...data, dates: e.target.value })}
-                placeholder="Apr 12 – 16, 2026"
-                className="pl-11 h-14 rounded-2xl border-memento-parchment bg-white text-base"
-              />
-              <div className="grid grid-cols-3 gap-2 mt-4">
-                {["Weekend", "Long weekend", "1 week", "2 weeks", "3+ weeks", "Flexible"].map((d) => (
+            <div className="space-y-4">
+              <div className="bg-white rounded-2xl border border-memento-parchment overflow-hidden">
+                <Calendar
+                  mode="range"
+                  selected={dateRange}
+                  onSelect={handleRangeSelect}
+                  disabled={{ before: today }}
+                  fromDate={today}
+                  numberOfMonths={1}
+                  classNames={{
+                    day_selected:
+                      "bg-memento-terracotta text-white hover:bg-memento-terracotta hover:text-white focus:bg-memento-terracotta focus:text-white",
+                    day_range_middle:
+                      "aria-selected:bg-[#F5E8E3] aria-selected:text-memento-espresso",
+                    day_range_start:
+                      "day-range-start bg-memento-terracotta text-white hover:bg-memento-terracotta",
+                    day_range_end:
+                      "day-range-end bg-memento-terracotta text-white hover:bg-memento-terracotta",
+                    day_today: "bg-memento-sand text-memento-espresso font-semibold",
+                  }}
+                  data-testid="wizard-dates-calendar"
+                />
+              </div>
+
+              {data.dates && (
+                <p className="text-center text-sm font-medium text-memento-terracotta">
+                  {data.dates}
+                </p>
+              )}
+
+              <div className="grid grid-cols-3 gap-2">
+                {DURATION_CHIPS.map((chip) => (
                   <button
-                    key={d}
-                    data-testid={`wizard-dates-chip-${d.toLowerCase().replace(/\s/g, "-")}`}
-                    onClick={() => setData({ ...data, dates: d })}
+                    key={chip.label}
+                    data-testid={`wizard-dates-chip-${chip.label.toLowerCase().replace(/\s/g, "-")}`}
+                    onClick={() => handleDurationChip(chip)}
                     className={`px-4 py-2.5 rounded-full text-sm border transition-colors ${
-                      data.dates === d
+                      data.dates === chip.label ||
+                      (chip.label === "Flexible" && data.dates === "Flexible")
                         ? "bg-memento-espresso text-memento-cream border-memento-espresso"
                         : "bg-white border-memento-parchment text-memento-espresso hover:border-memento-terracotta"
                     }`}
                   >
-                    {d}
+                    {chip.label}
                   </button>
                 ))}
               </div>
@@ -121,14 +211,7 @@ export const IntakeWizard = ({ onComplete, onSwitchToChat }) => {
           {/* GROUP */}
           {current.key === "group" && (
             <div className="grid grid-cols-2 gap-3">
-              {[
-                "Solo",
-                "Couple",
-                "2 adults",
-                "Family with kids",
-                "Friends (3-5)",
-                "Friends (6+)",
-              ].map((g) => (
+              {["Solo", "Couple", "2 adults", "Family with kids", "Friends (3-5)", "Friends (6+)"].map((g) => (
                 <button
                   key={g}
                   data-testid={`wizard-group-${g.toLowerCase().replace(/[^a-z]/g, "-")}`}
@@ -203,14 +286,7 @@ export const IntakeWizard = ({ onComplete, onSwitchToChat }) => {
                 />
               </div>
               <div className="grid grid-cols-2 gap-2">
-                {[
-                  "Under $1k",
-                  "$1k – $2.5k",
-                  "$2.5k – $5k",
-                  "$5k – $10k",
-                  "$10k+",
-                  "No limit",
-                ].map((b) => (
+                {["Under $1k", "$1k – $2.5k", "$2.5k – $5k", "$5k – $10k", "$10k+", "No limit"].map((b) => (
                   <button
                     key={b}
                     data-testid={`wizard-budget-${b.toLowerCase().replace(/[^a-z0-9]/g, "-")}`}
@@ -225,6 +301,9 @@ export const IntakeWizard = ({ onComplete, onSwitchToChat }) => {
                   </button>
                 ))}
               </div>
+              <p className="text-xs text-memento-coffee text-center pt-1">
+                Memento will optimise every activity to your budget — cheaper alternatives included.
+              </p>
             </div>
           )}
         </div>
