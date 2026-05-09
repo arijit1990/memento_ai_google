@@ -13,7 +13,7 @@ import { ExportModal } from "./ExportModal";
 import { api, getGuestSessionId } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
-export const ItineraryPanel = ({ trip, compact = false, onSave, readOnly = false, onEdit }) => {
+export const ItineraryPanel = ({ trip, compact = false, onSave, readOnly = false }) => {
   const { prices, loading: pricesLoading } = useLivePrices(trip);
   const { user } = useAuth();
   const [shareCopied, setShareCopied] = useState(false);
@@ -253,26 +253,15 @@ export const ItineraryPanel = ({ trip, compact = false, onSave, readOnly = false
               Day-by-day
             </h2>
             {!readOnly && (
-              onEdit ? (
+              <Link to="/chat" state={{ tripId: trip.id }}>
                 <Button
                   variant="ghost"
                   data-testid="itinerary-edit-with-ai"
-                  onClick={onEdit}
                   className="text-xs font-medium text-memento-terracotta hover:bg-memento-sand rounded-full"
                 >
                   Edit with AI →
                 </Button>
-              ) : (
-                <Link to="/chat" state={{ tripId: trip.id }}>
-                  <Button
-                    variant="ghost"
-                    data-testid="itinerary-edit-with-ai"
-                    className="text-xs font-medium text-memento-terracotta hover:bg-memento-sand rounded-full"
-                  >
-                    Edit with AI →
-                  </Button>
-                </Link>
-              )
+              </Link>
             )}
           </div>
           {(trip.days || []).map((d, i) => (
