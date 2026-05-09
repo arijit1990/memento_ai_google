@@ -163,6 +163,16 @@ export const RealMap = ({ trip }) => {
     };
   }, [trip]);
 
+  // Invalidate Leaflet size whenever the container is resized (e.g. chat panel collapses)
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver(() => {
+      if (mapRef.current) mapRef.current.invalidateSize();
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <div
       className="relative w-full rounded-3xl overflow-hidden border border-memento-parchment bg-memento-sand"
