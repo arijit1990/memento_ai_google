@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Plane, ArrowLeft, MessageCircle, Map } from "lucide-react";
+import { Plane, ArrowLeft, MessageCircle, Map, ChevronRight } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -44,6 +44,7 @@ const Chat = () => {
         }
       : {}
   );
+  const [chatCollapsed, setChatCollapsed] = useState(false);
   const [editing, setEditing] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [thinkingLabel, setThinkingLabel] = useState(THINKING_PHRASES[0]);
@@ -236,6 +237,7 @@ const Chat = () => {
       if (!generated) throw new Error("No trip received");
 
       setTrip(generated);
+      setChatCollapsed(true);
       setMobileView("itinerary");
       setMessages((m) => [
         ...m,
@@ -282,63 +284,90 @@ const Chat = () => {
       data-testid="chat-page"
     >
       <div
-        className={`w-full md:w-[45%] lg:w-[42%] xl:w-[40%] h-full flex flex-col border-r border-memento-parchment bg-white relative ${
-          showItineraryMobile ? "hidden md:flex" : "flex"
-        }`}
+        className={`h-full flex flex-col border-r border-memento-parchment bg-white relative overflow-hidden transition-[width] duration-300 ease-in-out
+          ${chatCollapsed
+            ? "hidden md:flex md:w-12 cursor-pointer hover:bg-memento-sand/40"
+            : showItineraryMobile
+              ? "hidden md:flex md:w-[45%] lg:w-[42%] xl:w-[40%]"
+              : "flex w-full md:w-[45%] lg:w-[42%] xl:w-[40%]"
+          }`}
+        onClick={chatCollapsed ? () => setChatCollapsed(false) : undefined}
+        role={chatCollapsed ? "button" : undefined}
+        aria-label={chatCollapsed ? "Expand chat" : undefined}
       >
-        <div className="md:hidden border-b border-memento-parchment px-4 py-3 flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2 text-memento-espresso text-sm">
-            <ArrowLeft className="w-4 h-4" />
-            <span className="font-serif">Memento</span>
-          </Link>
-          {trip && (
-            <button
-              onClick={() => setMobileView("itinerary")}
-              data-testid="mobile-show-itinerary"
-              className="text-xs font-medium text-memento-terracotta flex items-center gap-1"
-            >
-              <Map className="w-3.5 h-3.5" />
-              View itinerary
-            </button>
-          )}
-        </div>
-
-        {mode === "wizard" ? (
-          <IntakeWizard
-            onComplete={handleWizardComplete}
-            onSwitchToChat={() => setMode("chat")}
-            initialDestination={locState.destination || ""}
-          />
+        {chatCollapsed ? (
+          <div className="flex-1 flex flex-col items-center pt-6 gap-4 select-none">
+            <div className="w-8 h-8 rounded-full bg-memento-sand flex items-center justify-center">
+              <ChevronRight className="w-4 h-4 text-memento-terracotta" strokeWidth={2.5} />
+            </div>
+            <div style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>
+              <span className="text-[9px] uppercase tracking-[0.2em] text-memento-coffee font-semibold">
+                Chat
+              </span>
+            </div>
+            <MessageCircle className="w-4 h-4 text-memento-parchment mt-2" />
+          </div>
         ) : (
-          <ChatThread
-            messages={messages}
-            onSend={handleSend}
-            onConfirm={handleConfirm}
-            generating={generating || editing || thinking}
-            generatingLabel={
-              editing
-                ? "Rewriting your itinerary..."
-                : generating
-                ? progressMessage
-                : thinkingLabel
-            }
-            showProgressBullets={generating}
-            onSwitchToWizard={() => setMode("wizard")}
-            showConfirmCard={showConfirm}
-            confirmSummary={confirmSummary}
-            placeholder={
-              trip
-                ? "Make day 3 less touristy. Or add a romantic dinner..."
-                : "Tell me where you're going — 'Paris with my partner for a week, food and art'..."
-            }
-          />
+          <>
+            <div className="md:hidden border-b border-memento-parchment px-4 py-3 flex items-center justify-between">
+              <Link to="/" className="flex items-center gap-2 text-memento-espresso text-sm">
+                <ArrowLeft className="w-4 h-4" />
+                <span className="font-serif">Memento</span>
+              </Link>
+              {trip && (
+                <button
+                  onClick={() => setMobileView("itinerary")}
+                  data-testid="mobile-show-itinerary"
+                  className="text-xs font-medium text-memento-terracotta flex items-center gap-1"
+                >
+                  <Map className="w-3.5 h-3.5" />
+                  View itinerary
+                </button>
+              )}
+            </div>
+
+            {mode === "wizard" ? (
+              <IntakeWizard
+                onComplete={handleWizardComplete}
+                onSwitchToChat={() => setMode("chat")}
+                initialDestination={locState.destination || ""}
+              />
+            ) : (
+              <ChatThread
+                messages={messages}
+                onSend={handleSend}
+                onConfirm={handleConfirm}
+                generating={generating || editing || thinking}
+                generatingLabel={
+                  editing
+                    ? "Rewriting your itinerary..."
+                    : generating
+                    ? progressMessage
+                    : thinkingLabel
+                }
+                showProgressBullets={generating}
+                onSwitchToWizard={() => setMode("wizard")}
+                showConfirmCard={showConfirm}
+                confirmSummary={confirmSummary}
+                placeholder={
+                  trip
+                    ? "Make day 3 less touristy. Or add a romantic dinner..."
+                    : "Tell me where you're going — 'Paris with my partner for a week, food and art'..."
+                }
+              />
+            )}
+          </>
         )}
       </div>
 
       <div
-        className={`md:flex md:w-[55%] lg:w-[58%] xl:w-[60%] h-full bg-memento-cream flex-col ${
-          showItineraryMobile ? "flex w-full" : "hidden"
-        }`}
+        className={`h-full bg-memento-cream flex-col transition-all duration-300 ease-in-out
+          ${chatCollapsed
+            ? "flex flex-1"
+            : showItineraryMobile
+              ? "flex w-full"
+              : "hidden md:flex md:w-[55%] lg:w-[58%] xl:w-[60%]"
+          }`}
         data-testid="itinerary-side-panel"
       >
         {showItineraryMobile && (
@@ -358,7 +387,7 @@ const Chat = () => {
           </div>
         )}
         {trip ? (
-          <ItineraryPanel trip={trip} compact onSave={handleSaveTrip} />
+          <ItineraryPanel trip={trip} compact onSave={handleSaveTrip} onEdit={() => setChatCollapsed(false)} />
         ) : (
           <EmptyItineraryState />
         )}
