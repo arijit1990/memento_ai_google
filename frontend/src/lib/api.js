@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || "").replace(/\/$/, "");
+const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || "https://memento-ai-google.vercel.app").replace(/\/$/, "");
 export const API = `${BACKEND_URL}/api`;
 
 // Credentials (httpOnly cookie) are sent automatically via withCredentials.
